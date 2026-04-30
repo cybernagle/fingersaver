@@ -153,7 +153,7 @@ func (a AppModel) View() tea.View {
 	chatW := a.width * 2 / 5
 	chatView := a.chat.View()
 	chatContent := fmt.Sprintf("%s\n%s", chatTitle.Render("Chat"), chatView.Content)
-	chatPane := chatStyle.Width(chatW).Height(a.height).Render(chatContent)
+	chatPane := chatStyle.Width(chatW).Height(a.height - 2).Render(chatContent)
 
 	viewerStyle, viewerTitle := PaneStyles(a.focus == FocusViewer)
 	viewerW := a.width - chatW - 2
@@ -162,7 +162,7 @@ func (a AppModel) View() tea.View {
 		viewerTitle.Render(fmt.Sprintf("Sessions %s", a.viewer.ActiveSession())),
 		viewerView.Content,
 	)
-	viewerPane := viewerStyle.Width(viewerW).Height(a.height).Render(viewerContent)
+	viewerPane := viewerStyle.Width(viewerW).Height(a.height - 2).Render(viewerContent)
 
 	joined := lipgloss.JoinHorizontal(lipgloss.Top, chatPane, viewerPane)
 
