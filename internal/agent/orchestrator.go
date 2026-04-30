@@ -213,7 +213,7 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 	o.appendMessage(llm.Message{Role: llm.RoleUser, Content: input})
 
 	opts := o.buildOptions()
-	log.Printf("[orchestrator] handleLLM start input=%q model=%s", input, opts.Model)
+	log.Printf("[orchestrator] handleLLM start inputLen=%d model=%s", len(input), opts.Model)
 
 	for i := 0; i < maxToolIterations; i++ {
 		msgs := o.snapshotMessages()
@@ -295,7 +295,7 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 			toolResults = append(toolResults, result)
 
 			log.Printf("[orchestrator] tool result name=%s len=%d isError=%v", tc.Name, len(result.Content), result.IsError)
-			ch <- OrchestratorEvent{Type: EventToolResult, ToolName: tc.Name, ToolResult: result.Content}
+			ch <- OrchestratorEvent{Type: EventToolResult, ToolName: tc.Name, Content: result.Content, ToolResult: result.Content}
 		}
 
 		// Add tool results to history.

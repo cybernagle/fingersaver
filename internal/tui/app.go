@@ -99,6 +99,7 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tickCmd())
 
 	case combinedTmuxMsg:
+		a.lastOutput[msg.session] = msg.output
 		a.viewer.AppendOutput(msg.session, msg.output)
 		m2, cmd2 := a.viewer.Update(SessionListMsg{Sessions: msg.sessions})
 		a.viewer = m2.(ViewerModel)
@@ -181,7 +182,7 @@ func trimToLines(s string, maxLines int) string {
 }
 
 func (a *AppModel) processOrchestratorInput(text string) {
-	log.Printf("[tui] processOrchestratorInput start text=%q", text)
+	log.Printf("[tui] processOrchestratorInput start textLen=%d", len(text))
 	events, err := a.orchestrator.ProcessInput(a.ctx, text)
 	if err != nil {
 		log.Printf("[tui] ProcessInput error: %v", err)
@@ -237,8 +238,8 @@ func (a AppModel) pollTmux() tea.Cmd {
 		active := a.viewer.ActiveSession()
 		if active != "" {
 			cmd := tmux.CapturePaneCmd(active)
-			if out, err := a.tmuxClient.Exec(cmd); err == nil && out != "" && out != a.lastOutput[active] {
-				a.lastOutput[active] = out
+			last := a.lastOutput[active]
+			if out, err := a.tmuxClient.Exec(cmd); err == nil && out != "" && out != last {
 				return combinedTmuxMsg{
 					sessions: names,
 					output:   out,
