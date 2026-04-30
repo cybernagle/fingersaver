@@ -153,14 +153,14 @@ func (a AppModel) View() tea.View {
 	chatStyle, chatTitle := PaneStyles(a.focus == FocusChat)
 	chatW := a.width * 2 / 5
 	chatView := a.chat.View()
-	chatContent := fmt.Sprintf("%s\n%s", chatTitle.Render("Chat"), chatView.Content)
+	chatContent := fmt.Sprintf("%s\n%s", chatTitle.Render(fmt.Sprintf("Chat [%dx%d]", chatW, a.height)), chatView.Content)
 	chatPane := chatStyle.Width(chatW).Height(a.height - 2).Render(chatContent)
 
 	viewerStyle, viewerTitle := PaneStyles(a.focus == FocusViewer)
 	viewerW := a.width - chatW - 2
 	viewerView := a.viewer.View()
 	viewerContent := fmt.Sprintf("%s\n%s",
-		viewerTitle.Render(fmt.Sprintf("Sessions %s", a.viewer.ActiveSession())),
+		viewerTitle.Render(fmt.Sprintf("Sessions %s [%dx%d]", a.viewer.ActiveSession(), viewerW, a.height)),
 		viewerView.Content,
 	)
 	viewerPane := viewerStyle.Width(viewerW).Height(a.height - 2).Render(viewerContent)
