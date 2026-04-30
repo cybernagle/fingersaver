@@ -186,10 +186,12 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if s == "space" {
 				s = " "
 			}
-			if s != "" {
+			// Only insert actual text characters, not symbolic key names
+			// like "ctrl+a", "pgup", "f1", etc.
+			if utf8.RuneCountInString(s) == 1 {
 				pos := c.cursorByteIdx()
 				c.input = c.input[:pos] + s + c.input[pos:]
-				c.cursor += utf8.RuneCountInString(s)
+				c.cursor++
 			}
 		}
 
@@ -278,9 +280,6 @@ func (c ChatModel) View() tea.View {
 		contentLines = append(contentLines, "")
 	}
 
-	log.Printf("[chat/view] height=%d targetLines=%d contentLines=%d/%d maxContent=%d working=%v msgs=%d",
-		c.height, targetLines, len(contentLines), maxContentLines, maxContentLines, c.working, len(c.messages))
-
 	cursorLine := "> " + c.input
 	if c.focused && !c.working {
 		pos := c.cursorByteIdx()
@@ -295,8 +294,6 @@ func (c ChatModel) View() tea.View {
 	contentLines = append(contentLines, chatInputStyle.Render(cursorLine))
 
 	output := strings.Join(contentLines, "\n")
-	outputLines := strings.Count(output, "\n") + 1
-	log.Printf("[chat/view] outputLines=%d targetLines=%d", outputLines, targetLines)
 	return tea.NewView(output)
 }
 

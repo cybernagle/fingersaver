@@ -75,6 +75,11 @@ func main() {
 		return
 	}
 
+	if err := cfg.ValidateAPIKey(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Start tmux client.
 	tc := tmux.NewClient(cfg.TmuxSocketPath)
 	if err := tc.Start(ctx); err != nil {
@@ -103,7 +108,6 @@ func main() {
 
 	// Create and run TUI.
 	app := tui.NewAppModel(orch, tc)
-	app.SetConfigInfo(cfg.Summary())
 
 	// Set up chat history persistence.
 	if cfg.ChatHistoryPath != "" {

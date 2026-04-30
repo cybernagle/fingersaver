@@ -11,12 +11,6 @@ import (
 // SubmitMsg is sent when the user submits chat input.
 type SubmitMsg struct{ Text string }
 
-// TmuxOutputMsg carries new tmux output to the viewer.
-type TmuxOutputMsg struct {
-	Session string
-	Content string
-}
-
 // OrchestratorEventMsg wraps an orchestrator event for the chat pane.
 type OrchestratorEventMsg struct {
 	Type     string // "text", "tool_call", "tool_result", "done"

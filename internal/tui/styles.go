@@ -10,8 +10,6 @@ var (
 	colorDim       = lipgloss.Color("243") // muted text
 	colorAccent    = lipgloss.Color("37")  // teal — borders, user messages, focus
 	colorSecondary = lipgloss.Color("180") // warm gold — viewer title
-	colorError     = lipgloss.Color("167") // soft red
-	colorSuccess   = lipgloss.Color("142") // muted green
 	colorPaneBg    = lipgloss.Color("234") // dark bg for panes
 )
 
@@ -56,16 +54,12 @@ var (
 
 	statusStyle = lipgloss.NewStyle().
 			Foreground(colorDim)
-
-	statusBarStyle = lipgloss.NewStyle().
-			Foreground(colorDim).
-			Background(lipgloss.Color("236"))
 )
 
-// PaneStyles returns (border, title) styles based on focus state.
-func PaneStyles(focused bool) (lipgloss.Style, lipgloss.Style) {
+// BorderStyle returns the border style based on focus state.
+func BorderStyle(focused bool) lipgloss.Style {
 	if focused {
-		return focusedBorderStyle, chatTitleStyle
+		return focusedBorderStyle
 	}
-	return borderStyle, viewerTitleStyle
+	return borderStyle
 }

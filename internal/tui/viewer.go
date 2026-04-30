@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -8,18 +9,16 @@ import (
 
 // ViewerModel renders tmux session output in the right pane.
 type ViewerModel struct {
-	sessions   map[string]string // session name -> output buffer
-	active     string            // currently displayed session
-	width      int
-	height     int
-	focused    bool
-	scrollback int
+	sessions map[string]string // session name -> output buffer
+	active   string            // currently displayed session
+	width    int
+	height   int
+	focused  bool
 }
 
 func NewViewerModel() ViewerModel {
 	return ViewerModel{
-		sessions:   make(map[string]string),
-		scrollback: 10000,
+		sessions: make(map[string]string),
 	}
 }
 
@@ -32,9 +31,6 @@ func (v ViewerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		v.width = msg.Width
 		v.height = msg.Height
-
-	case TmuxOutputMsg:
-		v.appendAndTrim(msg.Session, msg.Content)
 
 	case SessionListMsg:
 		v.pruneSessions(msg.Sessions)
@@ -99,9 +95,9 @@ func (v *ViewerModel) renderTabs() string {
 
 func (v *ViewerModel) handleKey(key string) {
 	switch key {
-	case "[", "left":
+	case "[":
 		v.switchSession(-1)
-	case "]", "right":
+	case "]":
 		v.switchSession(1)
 	}
 }
@@ -131,23 +127,12 @@ func (v *ViewerModel) sessionList() []string {
 	if len(v.sessions) == 0 {
 		return nil
 	}
-	// SessionListMsg prunes removed sessions, so map keys are current.
 	names := make([]string, 0, len(v.sessions))
 	for name := range v.sessions {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return names
-}
-
-func (v *ViewerModel) appendAndTrim(session, content string) {
-	buf := v.sessions[session] + content
-	if lines := strings.Split(buf, "\n"); len(lines) > v.scrollback {
-		buf = strings.Join(lines[len(lines)-v.scrollback:], "\n")
-	}
-	v.sessions[session] = buf
-	if v.active == "" {
-		v.active = session
-	}
 }
 
 func (v *ViewerModel) pruneSessions(active []string) {

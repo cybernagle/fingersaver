@@ -111,14 +111,6 @@ func TestViewerModelSessionListCleanup(t *testing.T) {
 	assert.NotContains(t, v.sessions, "remove")
 }
 
-func TestMapTmuxKey(t *testing.T) {
-	assert.Equal(t, "Up", mapTmuxKey("up"))
-	assert.Equal(t, "Down", mapTmuxKey("down"))
-	assert.Equal(t, "a", mapTmuxKey("a"))
-	assert.Equal(t, "Space", mapTmuxKey("space"))
-	assert.Equal(t, "", mapTmuxKey("ctrl+c"))
-}
-
 func TestTruncate(t *testing.T) {
 	assert.Equal(t, "short", util.Truncate("short", 10))
 	assert.Equal(t, "0123456789...", util.Truncate("0123456789012345", 10))

@@ -208,12 +208,14 @@ func (o *Orchestrator) handleMention(ctx context.Context, ch chan<- Orchestrator
 }
 
 func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEvent, input string) {
+	const maxToolIterations = 10
+
 	o.appendMessage(llm.Message{Role: llm.RoleUser, Content: input})
 
 	opts := o.buildOptions()
 	log.Printf("[orchestrator] handleLLM start input=%q model=%s", input, opts.Model)
 
-	for i := 0; ; i++ {
+	for i := 0; i < maxToolIterations; i++ {
 		msgs := o.snapshotMessages()
 		log.Printf("[orchestrator] LLM call iteration=%d messages=%d", i, len(msgs))
 
@@ -261,6 +263,7 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 				log.Printf("[orchestrator] stream error event: %v", event.Err)
 				ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("Stream error: %v", event.Err)}
 				ch <- OrchestratorEvent{Type: EventDone}
+				streamCancel()
 				return
 			}
 		}
@@ -302,6 +305,11 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 		opts = o.buildOptions()
 		opts.Tools = nil // Subsequent calls don't need tool definitions re-sent.
 	}
+
+	// Iteration cap reached.
+	log.Printf("[orchestrator] handleLLM hit max iterations=%d", maxToolIterations)
+	ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("Reached maximum tool iterations (%d). Stopping.", maxToolIterations)}
+	ch <- OrchestratorEvent{Type: EventDone}
 }
 
 func (o *Orchestrator) executeTool(ctx context.Context, tc llm.ToolCall) llm.ToolResult {

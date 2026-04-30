@@ -34,8 +34,6 @@ type AppModel struct {
 	cancel       context.CancelFunc
 	sendFn       func(tea.Msg)
 	lastOutput   *string
-	configInfo   string
-	welcomed     bool
 }
 
 type tmuxClient interface {
@@ -55,10 +53,6 @@ func NewAppModel(orch *agent.Orchestrator, tc tmuxClient) AppModel {
 		cancel:     cancel,
 		lastOutput: new(string),
 	}
-}
-
-func (a *AppModel) SetConfigInfo(info string) {
-	a.configInfo = info
 }
 
 func (a AppModel) Init() tea.Cmd {
@@ -149,17 +143,17 @@ func (a AppModel) View() tea.View {
 		return v
 	}
 
-	chatStyle, chatTitle := PaneStyles(a.focus == FocusChat)
+	chatStyle := BorderStyle(a.focus == FocusChat)
 	chatW := a.width * 2 / 5
 	chatView := a.chat.View()
-	chatContent := fmt.Sprintf("%s\n%s", chatTitle.Render(fmt.Sprintf("Chat [%dx%d]", chatW, a.height)), chatView.Content)
+	chatContent := fmt.Sprintf("%s\n%s", chatTitleStyle.Render("Chat"), chatView.Content)
 	chatPane := chatStyle.Width(chatW).Height(a.height).Render(chatContent)
 
-	viewerStyle, viewerTitle := PaneStyles(a.focus == FocusViewer)
+	viewerStyle := BorderStyle(a.focus == FocusViewer)
 	viewerW := a.width - chatW - 2
 	viewerView := a.viewer.View()
 	viewerContent := fmt.Sprintf("%s\n%s",
-		viewerTitle.Render(fmt.Sprintf("Sessions %s", a.viewer.ActiveSession())),
+		viewerTitleStyle.Render(fmt.Sprintf("Sessions %s", a.viewer.ActiveSession())),
 		viewerView.Content,
 	)
 	viewerPane := viewerStyle.Width(viewerW).Height(a.height).Render(viewerContent)
@@ -199,13 +193,17 @@ func (a *AppModel) processOrchestratorInput(text string) {
 		return
 	}
 	count := 0
+	doneSeen := false
 	for e := range events {
 		a.forwardEvent(e)
 		count++
+		if e.Type == agent.EventDone {
+			doneSeen = true
+		}
 	}
 	log.Printf("[tui] processOrchestratorInput done events=%d", count)
 	// Ensure done event if stream closed without one.
-	if a.sendFn != nil {
+	if !doneSeen && a.sendFn != nil {
 		a.sendFn(OrchestratorEventMsg{Type: "done"})
 	}
 }
@@ -257,32 +255,6 @@ type combinedTmuxMsg struct {
 	sessions []string
 	output   string
 	session  string
-}
-
-func (a *AppModel) forwardKeyToTmux(key string) {
-	if a.tmuxClient == nil || a.viewer.ActiveSession() == "" {
-		return
-	}
-	tmuxKey := mapTmuxKey(key)
-	if tmuxKey != "" {
-		cmd := tmux.SendKeysCmd(a.viewer.ActiveSession(), tmuxKey)
-		a.tmuxClient.Exec(cmd)
-	}
-}
-
-func mapTmuxKey(key string) string {
-	mappings := map[string]string{
-		"up": "Up", "down": "Down", "left": "Left", "right": "Right",
-		"space": "Space",
-		"[": "", "]": "",
-	}
-	if mapped, ok := mappings[key]; ok {
-		return mapped
-	}
-	if len(key) == 1 {
-		return key
-	}
-	return ""
 }
 
 func (a *AppModel) SetSendFn(fn func(tea.Msg)) {

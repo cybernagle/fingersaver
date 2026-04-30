@@ -176,6 +176,13 @@ func (c *Config) validate() error {
 	if c.LLMProvider != "anthropic" && c.LLMProvider != "openai" {
 		return fmt.Errorf("unsupported llm_provider: %s (must be anthropic or openai)", c.LLMProvider)
 	}
+	return nil
+}
+
+// ValidateAPIKey checks that an API key is configured. Call this before
+// starting the LLM provider, not during config loading, so that --config
+// can display the key status even when no key is set.
+func (c *Config) ValidateAPIKey() error {
 	if c.LLMAPIKey == "" {
 		return fmt.Errorf("no API key found: set ANTHROPIC_API_KEY/OPENAI_API_KEY or configure ~/.claude/settings.json")
 	}
