@@ -235,11 +235,22 @@ func (c ChatModel) View() tea.View {
 		case "user":
 			rendered = userMsgStyle.Render("> " + m.Content)
 		case "assistant":
-			rendered = assistantMsgStyle.Render(renderMarkdown(m.Content))
+			// Skip markdown rendering for streaming messages to avoid
+			// unstable output from glamour on incomplete markdown.
+			if m.Streaming {
+				rendered = assistantMsgStyle.Render(m.Content)
+			} else {
+				rendered = assistantMsgStyle.Render(renderMarkdown(m.Content))
+			}
 		case "system":
 			rendered = systemMsgStyle.Render(m.Content)
 		}
-		contentLines = append(contentLines, strings.Split(rendered, "\n")...)
+		lines := strings.Split(rendered, "\n")
+		// Drop trailing empty element from split if rendered ended with \n.
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+		contentLines = append(contentLines, lines...)
 		contentLines = append(contentLines, "")
 	}
 
