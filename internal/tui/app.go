@@ -125,7 +125,6 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat = m.(ChatModel)
 			cmds = append(cmds, cmd)
 		} else {
-			a.forwardKeyToTmux(kmsg.String())
 			m, cmd := a.viewer.Update(kmsg)
 			a.viewer = m.(ViewerModel)
 			cmds = append(cmds, cmd)
