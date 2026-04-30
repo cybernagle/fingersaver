@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"os"
 	"fmt"
 	"log"
 	"strings"
@@ -174,6 +175,17 @@ func (a AppModel) View() tea.View {
 	joinedLines := strings.Count(joined, "\n") + 1
 	log.Printf("[tui/view] term=%dx%d chatContent=%d chatPane=%d viewerContent=%d viewerPane=%d joined=%d",
 		a.width, a.height, chatLines, chatPaneLines, viewerLines, viewerPaneLines, joinedLines)
+
+	// Dump raw strings for diagnosis (first frame only).
+	if !a.welcomed {
+		a.welcomed = true
+		go func() {
+			os.WriteFile("/tmp/fingersaver_chatContent.txt", []byte(chatContent), 0644)
+			os.WriteFile("/tmp/fingersaver_chatPane.txt", []byte(chatPane), 0644)
+			os.WriteFile("/tmp/fingersaver_viewerContent.txt", []byte(viewerContent), 0644)
+			os.WriteFile("/tmp/fingersaver_viewerPane.txt", []byte(viewerPane), 0644)
+		}()
+	}
 
 	v := tea.NewView(joined)
 	v.AltScreen = true
