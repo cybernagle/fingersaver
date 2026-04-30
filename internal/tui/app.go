@@ -33,7 +33,7 @@ type AppModel struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	sendFn       func(tea.Msg)
-	lastOutput   *string
+	lastOutput   map[string]string
 }
 
 type tmuxClient interface {
@@ -51,7 +51,7 @@ func NewAppModel(orch *agent.Orchestrator, tc tmuxClient) AppModel {
 		tmuxClient: tc,
 		ctx:        ctx,
 		cancel:     cancel,
-		lastOutput: new(string),
+		lastOutput: make(map[string]string),
 	}
 }
 
@@ -237,8 +237,8 @@ func (a AppModel) pollTmux() tea.Cmd {
 		active := a.viewer.ActiveSession()
 		if active != "" {
 			cmd := tmux.CapturePaneCmd(active)
-			if out, err := a.tmuxClient.Exec(cmd); err == nil && out != "" && out != *a.lastOutput {
-				*a.lastOutput = out
+			if out, err := a.tmuxClient.Exec(cmd); err == nil && out != "" && out != a.lastOutput[active] {
+				a.lastOutput[active] = out
 				return combinedTmuxMsg{
 					sessions: names,
 					output:   out,

@@ -126,7 +126,7 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		c.cursorVisible = true
 		switch msg.String() {
 		case "enter":
-			if strings.TrimSpace(c.input) == "" {
+			if c.working || strings.TrimSpace(c.input) == "" {
 				return c, nil
 			}
 			text := c.input
