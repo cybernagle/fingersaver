@@ -40,33 +40,52 @@ func (p *OpenAIProvider) Stream(ctx context.Context, messages []Message, opts Ge
 			delta := evt.Choices[0].Delta
 
 			if delta.Content != "" {
-				ch <- StreamEvent{Type: EventTextDelta, Text: delta.Content}
+				select {
+				case ch <- StreamEvent{Type: EventTextDelta, Text: delta.Content}:
+				case <-ctx.Done():
+					return
+				}
 			}
 
 			for _, tc := range delta.ToolCalls {
 				if tc.ID != "" {
-					ch <- StreamEvent{
+					select {
+					case ch <- StreamEvent{
 						Type:         EventToolCallStart,
 						ToolCallID:   tc.ID,
 						ToolCallName: tc.Function.Name,
+					}:
+					case <-ctx.Done():
+						return
 					}
 				}
 				if tc.Function.Arguments != "" {
-					ch <- StreamEvent{
+					select {
+					case ch <- StreamEvent{
 						Type:           EventToolCallDelta,
 						ToolCallID:     tc.ID,
 						ArgumentsDelta: tc.Function.Arguments,
+					}:
+					case <-ctx.Done():
+						return
 					}
 				}
 			}
 
 			if evt.Choices[0].FinishReason != "" {
-				ch <- StreamEvent{Type: EventDone, StopReason: string(evt.Choices[0].FinishReason)}
+				select {
+				case ch <- StreamEvent{Type: EventDone, StopReason: string(evt.Choices[0].FinishReason)}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 
 		if err := stream.Err(); err != nil {
-			ch <- StreamEvent{Type: EventError, Err: fmt.Errorf("openai stream: %w", err)}
+			select {
+			case ch <- StreamEvent{Type: EventError, Err: fmt.Errorf("openai stream: %w", err)}:
+			case <-ctx.Done():
+			}
 		}
 	}()
 
@@ -93,7 +112,30 @@ func (p *OpenAIProvider) buildParams(messages []Message, opts GenerateOptions) (
 		case RoleUser:
 			params.Messages = append(params.Messages, openai.UserMessage(msg.Content))
 		case RoleAssistant:
-			params.Messages = append(params.Messages, openai.AssistantMessage(msg.Content))
+			if len(msg.ToolCalls) > 0 {
+				tcs := make([]openai.ChatCompletionMessageToolCallUnionParam, len(msg.ToolCalls))
+				for i, tc := range msg.ToolCalls {
+					tcs[i] = openai.ChatCompletionMessageToolCallUnionParam{
+						OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+							ID: tc.ID,
+							Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+								Name:      tc.Name,
+								Arguments: tc.Arguments,
+							},
+						},
+					}
+				}
+				content := openai.ChatCompletionAssistantMessageParamContentUnion{}
+				content.OfString = openai.String(msg.Content)
+				params.Messages = append(params.Messages, openai.ChatCompletionMessageParamUnion{
+					OfAssistant: &openai.ChatCompletionAssistantMessageParam{
+						Content:   content,
+						ToolCalls: tcs,
+					},
+				})
+			} else {
+				params.Messages = append(params.Messages, openai.AssistantMessage(msg.Content))
+			}
 		case RoleTool:
 			for _, tr := range msg.ToolResults {
 				params.Messages = append(params.Messages, openai.ToolMessage(tr.Content, tr.CallID))

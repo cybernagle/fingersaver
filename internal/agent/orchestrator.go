@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/naglezhang/fingersaver/internal/llm"
 )
@@ -48,8 +49,10 @@ type Orchestrator struct {
 	toolMap      map[string]Tool
 	commands     *CommandRegistry
 	hooks        *HookManager
+	msgMu        sync.Mutex
 	messages     []llm.Message
 	systemPrompt string
+	model        string
 }
 
 func NewOrchestrator(provider llm.Provider, tc TmuxClient, hooks *HookManager, tools []Tool) *Orchestrator {
@@ -76,16 +79,38 @@ func (o *Orchestrator) SetSystemPrompt(prompt string) {
 	o.systemPrompt = prompt
 }
 
+func (o *Orchestrator) SetModel(model string) {
+	o.model = model
+}
+
 func (o *Orchestrator) SetCommandRegistry(cr *CommandRegistry) {
 	o.commands = cr
 }
 
 func (o *Orchestrator) Messages() []llm.Message {
-	return o.messages
+	o.msgMu.Lock()
+	defer o.msgMu.Unlock()
+	cp := make([]llm.Message, len(o.messages))
+	copy(cp, o.messages)
+	return cp
 }
 
 func (o *Orchestrator) Hooks() *HookManager {
 	return o.hooks
+}
+
+func (o *Orchestrator) appendMessage(msg llm.Message) {
+	o.msgMu.Lock()
+	o.messages = append(o.messages, msg)
+	o.msgMu.Unlock()
+}
+
+func (o *Orchestrator) snapshotMessages() []llm.Message {
+	o.msgMu.Lock()
+	defer o.msgMu.Unlock()
+	cp := make([]llm.Message, len(o.messages))
+	copy(cp, o.messages)
+	return cp
 }
 
 // CrossAgentRelay reads output from sourceSession, asks the LLM to summarize,
@@ -103,12 +128,12 @@ func (o *Orchestrator) CrossAgentRelay(ctx context.Context, sourceSession, targe
 
 	// Ask LLM to summarize/extract.
 	relayPrompt := fmt.Sprintf("%s\n\nAgent output:\n%s", prompt, output)
-	o.messages = append(o.messages, llm.Message{Role: llm.RoleUser, Content: relayPrompt})
+	o.appendMessage(llm.Message{Role: llm.RoleUser, Content: relayPrompt})
 
 	opts := o.buildOptions()
 	opts.Tools = nil // No tool calls needed for relay.
 
-	stream, err := o.provider.Stream(ctx, o.messages, opts)
+	stream, err := o.provider.Stream(ctx, o.snapshotMessages(), opts)
 	if err != nil {
 		return fmt.Errorf("LLM relay: %w", err)
 	}
@@ -187,12 +212,13 @@ func (o *Orchestrator) handleMention(ctx context.Context, ch chan<- Orchestrator
 }
 
 func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEvent, input string) {
-	o.messages = append(o.messages, llm.Message{Role: llm.RoleUser, Content: input})
+	o.appendMessage(llm.Message{Role: llm.RoleUser, Content: input})
 
 	opts := o.buildOptions()
 
 	for i := 0; i < maxToolIterations; i++ {
-		stream, err := o.provider.Stream(ctx, o.messages, opts)
+		msgs := o.snapshotMessages()
+		stream, err := o.provider.Stream(ctx, msgs, opts)
 		if err != nil {
 			ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("LLM error: %v", err)}
 			ch <- OrchestratorEvent{Type: EventDone}
@@ -237,7 +263,7 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 			assistantMsg.Content = textParts.String()
 		}
 		assistantMsg.ToolCalls = toolCalls
-		o.messages = append(o.messages, assistantMsg)
+		o.appendMessage(assistantMsg)
 
 		// If no tool calls, we're done.
 		if len(toolCalls) == 0 {
@@ -257,7 +283,7 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 		}
 
 		// Add tool results to history.
-		o.messages = append(o.messages, llm.Message{Role: llm.RoleTool, ToolResults: toolResults})
+		o.appendMessage(llm.Message{Role: llm.RoleTool, ToolResults: toolResults})
 
 		// Reset opts — tools and system prompt only sent on first call.
 		opts = o.buildOptions()
@@ -331,12 +357,16 @@ func (o *Orchestrator) buildOptions() llm.GenerateOptions {
 		MaxTokens:    4096,
 		Tools:        tools,
 		SystemPrompt: o.systemPrompt,
+		Model:        o.model,
 	}
 }
 
 func parseJSONArgs(raw string) map[string]any {
 	args := make(map[string]any)
-	json.Unmarshal([]byte(raw), &args)
+	if err := json.Unmarshal([]byte(raw), &args); err != nil && raw != "" && raw != "{}" {
+		// Return what we can; caller checks required params individually.
+		args["_parse_error"] = err.Error()
+	}
 	return args
 }
 

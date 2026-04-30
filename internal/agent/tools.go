@@ -83,7 +83,10 @@ func NewSwitchSessionTool(tc TmuxClient) Tool {
 			if s == nil {
 				return "", fmt.Errorf("session %q not found", name)
 			}
-			return fmt.Sprintf("Switched to session %q.", name), nil
+			if _, err := tc.Exec(tmux.SwitchClientCmd(name)); err != nil {
+					return "", fmt.Errorf("switch to %q: %w", name, err)
+				}
+				return fmt.Sprintf("Switched to session %q.", name), nil
 		},
 	}
 }
@@ -172,8 +175,9 @@ func AllTools(tc TmuxClient) []Tool {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }

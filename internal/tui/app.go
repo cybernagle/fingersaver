@@ -94,6 +94,12 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, a.pollTmux())
 		cmds = append(cmds, tickCmd())
 
+		case combinedTmuxMsg:
+			a.viewer.AppendOutput(msg.session, msg.output)
+			m2, cmd2 := a.viewer.Update(SessionListMsg{Sessions: msg.sessions})
+			a.viewer = m2.(ViewerModel)
+			cmds = append(cmds, cmd2)
+
 	case OrchestratorEventMsg:
 		m, cmd := a.chat.Update(msg)
 		a.chat = m.(ChatModel)
@@ -153,6 +159,11 @@ func (a AppModel) View() tea.View {
 func (a *AppModel) processOrchestratorInput(text string) {
 	events, err := a.orchestrator.ProcessInput(a.ctx, text)
 	if err != nil {
+		a.forwardEvent(agent.OrchestratorEvent{
+			Type:    agent.EventText,
+			Content: fmt.Sprintf("Error: %v", err),
+		})
+		a.forwardEvent(agent.OrchestratorEvent{Type: agent.EventDone})
 		return
 	}
 	for e := range events {
@@ -184,8 +195,33 @@ func (a AppModel) pollTmux() tea.Cmd {
 		for i, s := range sessions {
 			names[i] = s.Name
 		}
+
+		// Capture output from active session.
+		active := a.viewer.ActiveSession()
+		if active != "" {
+			if s := state.FindSession(active); s != nil {
+				pane := s.ActivePane()
+				if pane != nil && pane.ID != "" {
+					cmd := tmux.CapturePaneCmd(pane.ID)
+					if out, err := a.tmuxClient.Exec(cmd); err == nil && out != "" {
+						return combinedTmuxMsg{
+							sessions: names,
+							output:   out,
+							session:  active,
+						}
+					}
+				}
+			}
+		}
+
 		return SessionListMsg{Sessions: names}
 	}
+}
+
+type combinedTmuxMsg struct {
+	sessions []string
+	output   string
+	session  string
 }
 
 func (a *AppModel) forwardKeyToTmux(key string) {

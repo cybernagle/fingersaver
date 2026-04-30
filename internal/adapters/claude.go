@@ -11,7 +11,8 @@ import (
 
 // ClaudeAdapter manages Claude Code CLI running inside a tmux session.
 type ClaudeAdapter struct {
-	tc tmuxClient
+	tc              tmuxClient
+	SkipPermissions bool
 }
 
 func NewClaudeAdapter(tc tmuxClient) *ClaudeAdapter {
@@ -21,7 +22,11 @@ func NewClaudeAdapter(tc tmuxClient) *ClaudeAdapter {
 func (c *ClaudeAdapter) Name() string { return "claude" }
 
 func (c *ClaudeAdapter) Launch(ctx context.Context, sessionName, workingDir string) error {
-	cmd := tmux.SendKeysCmd(sessionName, "claude --dangerously-skip-permissions")
+	claudeCmd := "claude"
+	if c.SkipPermissions {
+		claudeCmd = "claude --dangerously-skip-permissions"
+	}
+	cmd := tmux.SendKeysCmd(sessionName, claudeCmd)
 	if _, err := c.tc.Exec(cmd); err != nil {
 		return fmt.Errorf("launch claude: %w", err)
 	}

@@ -52,6 +52,7 @@ func main() {
 	hm := agent.NewHookManager()
 	orch := agent.NewOrchestrator(provider, tc, hm, agent.AllTools(tc))
 	orch.SetCommandRegistry(agent.NewCommandRegistry(tc))
+	orch.SetModel(cfg.LLMModel)
 
 	// Create and run TUI.
 	app := tui.NewAppModel(orch, tc)

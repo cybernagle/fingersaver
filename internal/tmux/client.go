@@ -49,6 +49,8 @@ func (c *Client) Start(ctx context.Context) error {
 		return fmt.Errorf("tmux client already running")
 	}
 
+	c.notifs = make(chan Notification, 256)
+
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 
@@ -114,17 +116,64 @@ func (c *Client) Exec(cmd string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Use "sh -c" to parse the command so quoted arguments work correctly.
-	out, err := exec.CommandContext(ctx, "sh", "-c",
-		fmt.Sprintf("tmux -S %s %s", c.socketPath, cmd)).CombinedOutput()
+	args := []string{"-S", c.socketPath}
+	args = append(args, parseTmuxArgs(cmd)...)
+	out, err := exec.CommandContext(ctx, "tmux", args...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("tmux %s: %w (%s)", cmd, err, strings.TrimSpace(string(out)))
 	}
 
-	// Parse any notification-format output.
 	c.parseAndSendOutput(out)
 
 	return strings.TrimSpace(string(out)), nil
+}
+
+// parseTmuxArgs splits a tmux command string into arguments,
+// respecting single and double quotes.
+func parseTmuxArgs(cmd string) []string {
+	var args []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+
+	for i := 0; i < len(cmd); i++ {
+		ch := cmd[i]
+		switch {
+		case inSingle:
+			if ch == '\'' {
+				inSingle = false
+			} else {
+				current.WriteByte(ch)
+			}
+		case inDouble:
+			if ch == '"' {
+				inDouble = false
+			} else if ch == '\\' && i+1 < len(cmd) {
+				i++
+				current.WriteByte(cmd[i])
+			} else {
+				current.WriteByte(ch)
+			}
+		default:
+			switch ch {
+			case '\'':
+				inSingle = true
+			case '"':
+				inDouble = true
+			case ' ', '\t':
+				if current.Len() > 0 {
+					args = append(args, current.String())
+					current.Reset()
+				}
+			default:
+				current.WriteByte(ch)
+			}
+		}
+	}
+	if current.Len() > 0 {
+		args = append(args, current.String())
+	}
+	return args
 }
 
 func (c *Client) parseAndSendOutput(data []byte) {

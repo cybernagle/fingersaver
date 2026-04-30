@@ -31,32 +31,53 @@ func (p *AnthropicProvider) Stream(ctx context.Context, messages []Message, opts
 		defer close(ch)
 
 		stream := p.client.Messages.NewStreaming(ctx, params)
+		var activeToolID string
 
 		for stream.Next() {
 			event := stream.Current()
 			switch e := event.AsAny().(type) {
 			case anthropic.ContentBlockStartEvent:
 				if block, ok := e.ContentBlock.AsAny().(anthropic.ToolUseBlock); ok {
-					ch <- StreamEvent{
+					activeToolID = block.ID
+					select {
+					case ch <- StreamEvent{
 						Type:         EventToolCallStart,
 						ToolCallID:   block.ID,
 						ToolCallName: block.Name,
+					}:
+					case <-ctx.Done():
+						return
 					}
 				}
 			case anthropic.ContentBlockDeltaEvent:
 				switch delta := e.Delta.AsAny().(type) {
 				case anthropic.TextDelta:
-					ch <- StreamEvent{Type: EventTextDelta, Text: delta.Text}
+					select {
+					case ch <- StreamEvent{Type: EventTextDelta, Text: delta.Text}:
+					case <-ctx.Done():
+						return
+					}
 				case anthropic.InputJSONDelta:
-					ch <- StreamEvent{Type: EventToolCallDelta, ArgumentsDelta: delta.PartialJSON}
+					select {
+					case ch <- StreamEvent{Type: EventToolCallDelta, ToolCallID: activeToolID, ArgumentsDelta: delta.PartialJSON}:
+					case <-ctx.Done():
+						return
+					}
 				}
 			case anthropic.MessageDeltaEvent:
-				ch <- StreamEvent{Type: EventDone, StopReason: string(e.Delta.StopReason)}
+				select {
+				case ch <- StreamEvent{Type: EventDone, StopReason: string(e.Delta.StopReason)}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 
 		if err := stream.Err(); err != nil {
-			ch <- StreamEvent{Type: EventError, Err: fmt.Errorf("anthropic stream: %w", err)}
+			select {
+			case ch <- StreamEvent{Type: EventError, Err: fmt.Errorf("anthropic stream: %w", err)}:
+			case <-ctx.Done():
+			}
 		}
 	}()
 
