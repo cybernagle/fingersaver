@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,6 +9,7 @@ import (
 // ViewerModel renders tmux session output in the right pane.
 type ViewerModel struct {
 	sessions map[string]string // session name -> output buffer
+	order    []string          // authoritative session list from SessionListMsg
 	active   string            // currently displayed session
 	width    int
 	height   int
@@ -33,9 +33,15 @@ func (v ViewerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		v.height = msg.Height
 
 	case SessionListMsg:
+		v.order = msg.Sessions
 		v.pruneSessions(msg.Sessions)
-		if v.active == "" && len(msg.Sessions) > 0 {
-			v.active = msg.Sessions[0]
+		// If active session was removed, switch to the first remaining one.
+		if v.active == "" || !v.sessionExists(v.active) {
+			if len(msg.Sessions) > 0 {
+				v.active = msg.Sessions[0]
+			} else {
+				v.active = ""
+			}
 		}
 
 	case tea.KeyPressMsg:
@@ -52,7 +58,7 @@ func (v ViewerModel) View() tea.View {
 	var b strings.Builder
 
 	// Session tabs.
-	if len(v.sessionList()) > 0 {
+	if len(v.order) > 0 {
 		b.WriteString(v.renderTabs())
 		b.WriteString("\n")
 	}
@@ -81,9 +87,8 @@ func (v ViewerModel) View() tea.View {
 }
 
 func (v *ViewerModel) renderTabs() string {
-	sessions := v.sessionList()
 	var parts []string
-	for _, s := range sessions {
+	for _, s := range v.order {
 		if s == v.active {
 			parts = append(parts, viewerTitleStyle.Render("["+s+"]"))
 		} else {
@@ -103,12 +108,11 @@ func (v *ViewerModel) handleKey(key string) {
 }
 
 func (v *ViewerModel) switchSession(dir int) {
-	sessions := v.sessionList()
-	if len(sessions) == 0 {
+	if len(v.order) == 0 {
 		return
 	}
 	idx := 0
-	for i, s := range sessions {
+	for i, s := range v.order {
 		if s == v.active {
 			idx = i
 			break
@@ -116,23 +120,20 @@ func (v *ViewerModel) switchSession(dir int) {
 	}
 	idx += dir
 	if idx < 0 {
-		idx = len(sessions) - 1
-	} else if idx >= len(sessions) {
+		idx = len(v.order) - 1
+	} else if idx >= len(v.order) {
 		idx = 0
 	}
-	v.active = sessions[idx]
+	v.active = v.order[idx]
 }
 
-func (v *ViewerModel) sessionList() []string {
-	if len(v.sessions) == 0 {
-		return nil
+func (v *ViewerModel) sessionExists(name string) bool {
+	for _, s := range v.order {
+		if s == name {
+			return true
+		}
 	}
-	names := make([]string, 0, len(v.sessions))
-	for name := range v.sessions {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return false
 }
 
 func (v *ViewerModel) pruneSessions(active []string) {

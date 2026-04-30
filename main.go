@@ -139,6 +139,7 @@ func runChat(ctx context.Context, orch *agent.Orchestrator) {
 	fmt.Println("FingerSaver CLI Chat (type 'exit' to quit)")
 	fmt.Println()
 	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB buffer for long prompts
 
 	for {
 		fmt.Print("> ")
@@ -172,6 +173,9 @@ func runChat(ctx context.Context, orch *agent.Orchestrator) {
 				fmt.Println()
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
 	}
 }
 

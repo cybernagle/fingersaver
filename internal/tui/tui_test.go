@@ -115,3 +115,213 @@ func TestTruncate(t *testing.T) {
 	assert.Equal(t, "short", util.Truncate("short", 10))
 	assert.Equal(t, "0123456789...", util.Truncate("0123456789012345", 10))
 }
+
+// --- Chat input history navigation ---
+
+func TestChatModelHistoryNavigation(t *testing.T) {
+	c := NewChatModel()
+	c.SetSize(80, 24)
+
+	// Submit two messages.
+	c.input = "first"
+	m, _ := c.Update(tea.KeyPressMsg{Code: 13}) // enter
+	c = m.(ChatModel)
+	c.working = false // reset working state for next submit
+
+	c.input = "second"
+	m, _ = c.Update(tea.KeyPressMsg{Code: 13}) // enter
+	c = m.(ChatModel)
+	c.working = false
+
+	assert.Equal(t, "", c.input)
+	assert.Equal(t, 2, c.historyIdx)
+
+	// Up once -> "second"
+	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	c = m.(ChatModel)
+	assert.Equal(t, "second", c.input)
+
+	// Up again -> "first"
+	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	c = m.(ChatModel)
+	assert.Equal(t, "first", c.input)
+
+	// Up at boundary -> stays "first"
+	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	c = m.(ChatModel)
+	assert.Equal(t, "first", c.input)
+
+	// Down -> "second"
+	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	c = m.(ChatModel)
+	assert.Equal(t, "second", c.input)
+
+	// Down at end -> cleared
+	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	c = m.(ChatModel)
+	assert.Equal(t, "", c.input)
+}
+
+func TestChatModelBlockSubmitWhileWorking(t *testing.T) {
+	c := NewChatModel()
+	c.SetSize(80, 24)
+	c.input = "hello"
+	c.working = true
+
+	m, cmd := c.Update(tea.KeyPressMsg{Code: 13}) // enter
+	c = m.(ChatModel)
+	assert.Equal(t, "hello", c.input) // input not cleared
+	assert.Nil(t, cmd)
+}
+
+// --- Multibyte rune editing ---
+
+func TestChatModelMultibyteInput(t *testing.T) {
+	c := NewChatModel()
+	c.SetSize(80, 24)
+
+	// Simulate typing a multibyte character (Chinese: 你)
+	m, _ := c.Update(tea.KeyPressMsg{Text: "你"})
+	c = m.(ChatModel)
+	assert.Equal(t, "你", c.input)
+	assert.Equal(t, 1, c.cursor)
+
+	// Backspace removes the whole rune
+	m, _ = c.Update(tea.KeyPressMsg{Code: 127})
+	c = m.(ChatModel)
+	assert.Equal(t, "", c.input)
+	assert.Equal(t, 0, c.cursor)
+}
+
+func TestChatModelCursorInMiddleOfMultibyte(t *testing.T) {
+	c := NewChatModel()
+	c.SetSize(80, 24)
+
+	// Type "abc"
+	for _, ch := range "abc" {
+		m, _ := c.Update(tea.KeyPressMsg{Code: ch})
+		c = m.(ChatModel)
+	}
+	assert.Equal(t, "abc", c.input)
+	assert.Equal(t, 3, c.cursor)
+
+	// Move cursor left twice to position 1
+	m, _ := c.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	c = m.(ChatModel)
+	assert.Equal(t, 2, c.cursor)
+	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	c = m.(ChatModel)
+	assert.Equal(t, 1, c.cursor)
+
+	// Insert multibyte char
+	m, _ = c.Update(tea.KeyPressMsg{Text: "你"})
+	c = m.(ChatModel)
+	assert.Equal(t, "a你bc", c.input)
+	assert.Equal(t, 2, c.cursor)
+}
+
+// --- Viewer session switching with brackets ---
+
+func TestViewerModelBracketSwitching(t *testing.T) {
+	v := NewViewerModel()
+	v.focused = true
+	v.order = []string{"alpha", "beta", "gamma"}
+	v.active = "alpha"
+
+	// ] switches forward
+	m, _ := v.Update(tea.KeyPressMsg{Text: "]"})
+	v = m.(ViewerModel)
+	assert.Equal(t, "beta", v.ActiveSession())
+
+	// ] again
+	m, _ = v.Update(tea.KeyPressMsg{Text: "]"})
+	v = m.(ViewerModel)
+	assert.Equal(t, "gamma", v.ActiveSession())
+
+	// ] wraps to start
+	m, _ = v.Update(tea.KeyPressMsg{Text: "]"})
+	v = m.(ViewerModel)
+	assert.Equal(t, "alpha", v.ActiveSession())
+
+	// [ goes backward
+	m, _ = v.Update(tea.KeyPressMsg{Text: "["})
+	v = m.(ViewerModel)
+	assert.Equal(t, "gamma", v.ActiveSession())
+}
+
+func TestViewerModelActiveResetOnRemove(t *testing.T) {
+	v := NewViewerModel()
+	v.AppendOutput("a", "output-a")
+	v.AppendOutput("b", "output-b")
+	v.order = []string{"a", "b"}
+	v.active = "b"
+
+	// Session "b" is removed
+	m, _ := v.Update(SessionListMsg{Sessions: []string{"a"}})
+	v = m.(ViewerModel)
+	assert.Equal(t, "a", v.ActiveSession())
+	assert.NotContains(t, v.sessions, "b")
+}
+
+func TestViewerModelTabsShowAllSessions(t *testing.T) {
+	v := NewViewerModel()
+	v.AppendOutput("captured", "output")
+	v.order = []string{"captured", "pending"}
+	v.active = "captured"
+
+	view := v.View()
+	assert.Contains(t, view.Content, "captured")
+	assert.Contains(t, view.Content, "pending")
+}
+
+// --- Streaming message aggregation ---
+
+func TestChatModelStreamingAggregation(t *testing.T) {
+	c := NewChatModel()
+	c.SetSize(80, 24)
+
+	// First text delta starts a streaming assistant message.
+	m, _ := c.Update(OrchestratorEventMsg{Type: "text", Content: "Hello"})
+	c = m.(ChatModel)
+	assert.Len(t, c.messages, 1)
+	assert.Equal(t, "Hello", c.messages[0].Content)
+	assert.True(t, c.messages[0].Streaming)
+
+	// Second delta appends to the same message.
+	m, _ = c.Update(OrchestratorEventMsg{Type: "text", Content: " world"})
+	c = m.(ChatModel)
+	assert.Len(t, c.messages, 1)
+	assert.Equal(t, "Hello world", c.messages[0].Content)
+	assert.True(t, c.messages[0].Streaming)
+
+	// Tool call flushes streaming.
+	m, _ = c.Update(OrchestratorEventMsg{Type: "tool_call", ToolName: "list_sessions"})
+	c = m.(ChatModel)
+	assert.False(t, c.messages[0].Streaming)
+	assert.True(t, c.working)
+
+	// Tool result adds system message.
+	m, _ = c.Update(OrchestratorEventMsg{Type: "tool_result", ToolName: "list_sessions", Content: "session1"})
+	c = m.(ChatModel)
+	assert.True(t, c.working)
+
+	// Done stops working.
+	m, _ = c.Update(OrchestratorEventMsg{Type: "done"})
+	c = m.(ChatModel)
+	assert.False(t, c.working)
+}
+
+func TestChatModelStreamingFlushOnDone(t *testing.T) {
+	c := NewChatModel()
+	c.SetSize(80, 24)
+
+	// Start streaming text.
+	m, _ := c.Update(OrchestratorEventMsg{Type: "text", Content: "response"})
+	c = m.(ChatModel)
+	assert.True(t, c.messages[0].Streaming)
+
+	// Done flushes to history.
+	m, _ = c.Update(OrchestratorEventMsg{Type: "done"})
+	c = m.(ChatModel)
+	assert.False(t, c.messages[0].Streaming)
+}

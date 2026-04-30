@@ -100,6 +100,16 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case combinedTmuxMsg:
 		a.lastOutput[msg.session] = msg.output
+		// Prune lastOutput entries for sessions that no longer exist.
+		activeSet := make(map[string]struct{}, len(msg.sessions))
+		for _, s := range msg.sessions {
+			activeSet[s] = struct{}{}
+		}
+		for s := range a.lastOutput {
+			if _, ok := activeSet[s]; !ok {
+				delete(a.lastOutput, s)
+			}
+		}
 		a.viewer.AppendOutput(msg.session, msg.output)
 		m2, cmd2 := a.viewer.Update(SessionListMsg{Sessions: msg.sessions})
 		a.viewer = m2.(ViewerModel)

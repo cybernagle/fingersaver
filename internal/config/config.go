@@ -104,6 +104,13 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("FINGERSAVER_LLM_API_KEY"); v != "" {
 		c.LLMAPIKey = v
 	}
+
+	if v := os.Getenv("ANTHROPIC_BASE_URL"); v != "" {
+		c.LLMBaseURL = v
+	}
+	if v := os.Getenv("FINGERSAVER_LLM_BASE_URL"); v != "" {
+		c.LLMBaseURL = v
+	}
 }
 
 func (c *Config) loadClaudeDefaults() {
@@ -148,10 +155,23 @@ func (c *Config) loadClaudeDefaults() {
 			}
 		}
 	}
+	if c.LLMAPIKey == "" {
+		if v := settings.Env["OPENAI_API_KEY"]; v != "" {
+			c.LLMAPIKey = v
+			if c.LLMProvider == "" {
+				c.LLMProvider = "openai"
+			}
+		}
+	}
 
 	// Base URL for custom API endpoints.
 	if c.LLMBaseURL == "" {
 		if v := settings.Env["ANTHROPIC_BASE_URL"]; v != "" {
+			c.LLMBaseURL = v
+		}
+	}
+	if c.LLMBaseURL == "" {
+		if v := settings.Env["OPENAI_BASE_URL"]; v != "" {
 			c.LLMBaseURL = v
 		}
 	}
