@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,6 +59,14 @@ func Load() (*Config, error) {
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
+	}
+
+	// BigModel (智谱AI) uses OpenAI-compatible protocol at a different path.
+	if strings.Contains(cfg.LLMBaseURL, "bigmodel") {
+		rewritten := strings.Replace(cfg.LLMBaseURL, "/api/anthropic", "/api/coding/paas/v4", 1)
+		log.Printf("[config] BigModel detected, switching to OpenAI protocol: %s", rewritten)
+		cfg.LLMBaseURL = rewritten
+		cfg.LLMProvider = "openai"
 	}
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {

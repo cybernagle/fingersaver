@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -95,10 +94,6 @@ func (c *Client) Stop() error {
 	}
 
 	close(c.notifs)
-
-	killCmd := exec.Command("tmux", "-S", c.socketPath, "kill-server")
-	killCmd.Run()
-	os.Remove(c.socketPath)
 
 	return nil
 }

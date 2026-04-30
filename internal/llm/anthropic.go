@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"fmt"
+	"log"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -33,9 +35,13 @@ func (p *AnthropicProvider) Stream(ctx context.Context, messages []Message, opts
 
 	go func() {
 		defer close(ch)
+		start := time.Now()
+		log.Printf("[llm/anthropic] stream start model=%s", params.Model)
 
 		stream := p.client.Messages.NewStreaming(ctx, params)
 		var activeToolID string
+		textCount := 0
+		toolCount := 0
 
 		for stream.Next() {
 			event := stream.Current()
@@ -43,6 +49,8 @@ func (p *AnthropicProvider) Stream(ctx context.Context, messages []Message, opts
 			case anthropic.ContentBlockStartEvent:
 				if block, ok := e.ContentBlock.AsAny().(anthropic.ToolUseBlock); ok {
 					activeToolID = block.ID
+					toolCount++
+					log.Printf("[llm/anthropic] tool_call_start id=%s name=%s", block.ID, block.Name)
 					select {
 					case ch <- StreamEvent{
 						Type:         EventToolCallStart,
@@ -50,15 +58,18 @@ func (p *AnthropicProvider) Stream(ctx context.Context, messages []Message, opts
 						ToolCallName: block.Name,
 					}:
 					case <-ctx.Done():
+						log.Printf("[llm/anthropic] ctx cancelled during tool_call_start")
 						return
 					}
 				}
 			case anthropic.ContentBlockDeltaEvent:
 				switch delta := e.Delta.AsAny().(type) {
 				case anthropic.TextDelta:
+					textCount++
 					select {
 					case ch <- StreamEvent{Type: EventTextDelta, Text: delta.Text}:
 					case <-ctx.Done():
+						log.Printf("[llm/anthropic] ctx cancelled during text_delta")
 						return
 					}
 				case anthropic.InputJSONDelta:
@@ -69,6 +80,8 @@ func (p *AnthropicProvider) Stream(ctx context.Context, messages []Message, opts
 					}
 				}
 			case anthropic.MessageDeltaEvent:
+				log.Printf("[llm/anthropic] stream done stop_reason=%s text_deltas=%d tool_calls=%d elapsed=%s",
+					e.Delta.StopReason, textCount, toolCount, time.Since(start).Round(time.Millisecond))
 				select {
 				case ch <- StreamEvent{Type: EventDone, StopReason: string(e.Delta.StopReason)}:
 				case <-ctx.Done():
@@ -78,6 +91,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, messages []Message, opts
 		}
 
 		if err := stream.Err(); err != nil {
+			log.Printf("[llm/anthropic] stream error: %v elapsed=%s", err, time.Since(start).Round(time.Millisecond))
 			select {
 			case ch <- StreamEvent{Type: EventError, Err: fmt.Errorf("anthropic stream: %w", err)}:
 			case <-ctx.Done():

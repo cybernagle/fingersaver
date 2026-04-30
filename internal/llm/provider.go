@@ -17,7 +17,7 @@ func NewProvider(providerName, apiKey, baseURL string) (Provider, error) {
 	case "anthropic":
 		return NewAnthropicProvider(apiKey, baseURL), nil
 	case "openai":
-		return NewOpenAIProvider(apiKey), nil
+		return NewOpenAIProvider(apiKey, baseURL), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", providerName)
 	}

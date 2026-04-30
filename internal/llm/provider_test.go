@@ -112,7 +112,7 @@ func TestAnthropicBuildParamsWithToolResult(t *testing.T) {
 }
 
 func TestOpenAIBuildParams(t *testing.T) {
-	p := NewOpenAIProvider("test-key")
+	p := NewOpenAIProvider("test-key", "")
 	params, err := p.buildParams([]Message{
 		{Role: RoleUser, Content: "hello"},
 	}, GenerateOptions{
@@ -126,7 +126,7 @@ func TestOpenAIBuildParams(t *testing.T) {
 }
 
 func TestOpenAIBuildParamsWithTools(t *testing.T) {
-	p := NewOpenAIProvider("test-key")
+	p := NewOpenAIProvider("test-key", "")
 	params, err := p.buildParams([]Message{
 		{Role: RoleUser, Content: "list sessions"},
 	}, GenerateOptions{

@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -164,14 +166,26 @@ func (a AppModel) View() tea.View {
 	viewerPane := viewerStyle.Width(viewerW).Height(a.height).Render(viewerContent)
 
 	joined := lipgloss.JoinHorizontal(lipgloss.Top, chatPane, viewerPane)
+
+	// Debug: log line counts to catch overflow.
+	chatLines := strings.Count(chatContent, "\n") + 1
+	chatPaneLines := strings.Count(chatPane, "\n") + 1
+	viewerLines := strings.Count(viewerContent, "\n") + 1
+	viewerPaneLines := strings.Count(viewerPane, "\n") + 1
+	joinedLines := strings.Count(joined, "\n") + 1
+	log.Printf("[tui/view] term=%dx%d chatContent=%d chatPane=%d viewerContent=%d viewerPane=%d joined=%d",
+		a.width, a.height, chatLines, chatPaneLines, viewerLines, viewerPaneLines, joinedLines)
+
 	v := tea.NewView(joined)
 	v.AltScreen = true
 	return v
 }
 
 func (a *AppModel) processOrchestratorInput(text string) {
+	log.Printf("[tui] processOrchestratorInput start text=%q", text)
 	events, err := a.orchestrator.ProcessInput(a.ctx, text)
 	if err != nil {
+		log.Printf("[tui] ProcessInput error: %v", err)
 		a.forwardEvent(agent.OrchestratorEvent{
 			Type:    agent.EventText,
 			Content: fmt.Sprintf("Error: %v", err),
@@ -179,8 +193,15 @@ func (a *AppModel) processOrchestratorInput(text string) {
 		a.forwardEvent(agent.OrchestratorEvent{Type: agent.EventDone})
 		return
 	}
+	count := 0
 	for e := range events {
 		a.forwardEvent(e)
+		count++
+	}
+	log.Printf("[tui] processOrchestratorInput done events=%d", count)
+	// Ensure done event if stream closed without one.
+	if a.sendFn != nil {
+		a.sendFn(OrchestratorEventMsg{Type: "done"})
 	}
 }
 
@@ -212,18 +233,13 @@ func (a AppModel) pollTmux() tea.Cmd {
 		// Capture output from active session.
 		active := a.viewer.ActiveSession()
 		if active != "" {
-			if s := state.FindSession(active); s != nil {
-				pane := s.ActivePane()
-				if pane != nil && pane.ID != "" {
-					cmd := tmux.CapturePaneCmd(pane.ID)
-					if out, err := a.tmuxClient.Exec(cmd); err == nil && out != "" && out != *a.lastOutput {
-							*a.lastOutput = out
-						return combinedTmuxMsg{
-							sessions: names,
-							output:   out,
-							session:  active,
-						}
-					}
+			cmd := tmux.CapturePaneCmd(active)
+			if out, err := a.tmuxClient.Exec(cmd); err == nil && out != "" && out != *a.lastOutput {
+				*a.lastOutput = out
+				return combinedTmuxMsg{
+					sessions: names,
+					output:   out,
+					session:  active,
 				}
 			}
 		}

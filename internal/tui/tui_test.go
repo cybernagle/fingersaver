@@ -35,9 +35,15 @@ func TestChatModelSubmit(t *testing.T) {
 	assert.Empty(t, c.input)
 	require.NotNil(t, cmd)
 
-	// The command should produce a SubmitMsg.
+	// The command should produce a batch with SubmitMsg.
 	msg := cmd()
-	submit, ok := msg.(SubmitMsg)
+	batch, ok := msg.(tea.BatchMsg)
+	require.True(t, ok, "expected BatchMsg, got %T", msg)
+	require.Len(t, batch, 2)
+
+	// First command in batch should be SubmitMsg.
+	submitMsg := batch[0]()
+	submit, ok := submitMsg.(SubmitMsg)
 	require.True(t, ok)
 	assert.Equal(t, "h", submit.Text)
 }

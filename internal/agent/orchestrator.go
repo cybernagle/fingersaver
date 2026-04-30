@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/naglezhang/fingersaver/internal/llm"
 )
@@ -39,8 +41,6 @@ type OrchestratorEvent struct {
 	ToolArgs   map[string]any
 	ToolResult string
 }
-
-const maxToolIterations = 10
 
 type Orchestrator struct {
 	provider     llm.Provider
@@ -211,11 +211,18 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 	o.appendMessage(llm.Message{Role: llm.RoleUser, Content: input})
 
 	opts := o.buildOptions()
+	log.Printf("[orchestrator] handleLLM start input=%q model=%s", input, opts.Model)
 
-	for i := 0; i < maxToolIterations; i++ {
+	for i := 0; ; i++ {
 		msgs := o.snapshotMessages()
-		stream, err := o.provider.Stream(ctx, msgs, opts)
+		log.Printf("[orchestrator] LLM call iteration=%d messages=%d", i, len(msgs))
+
+		// Timeout each LLM call to avoid hanging forever.
+		streamCtx, streamCancel := context.WithTimeout(ctx, 60*time.Second)
+		stream, err := o.provider.Stream(streamCtx, msgs, opts)
 		if err != nil {
+			streamCancel()
+			log.Printf("[orchestrator] LLM stream error: %v", err)
 			ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("LLM error: %v", err)}
 			ch <- OrchestratorEvent{Type: EventDone}
 			return
@@ -224,8 +231,10 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 		var textParts strings.Builder
 		var toolCalls []llm.ToolCall
 		activeToolCalls := make(map[string]*llm.ToolCall)
+		eventCount := 0
 
 		for event := range stream {
+			eventCount++
 			switch event.Type {
 			case llm.EventTextDelta:
 				textParts.WriteString(event.Text)
@@ -234,6 +243,7 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 			case llm.EventToolCallStart:
 				tc := &llm.ToolCall{ID: event.ToolCallID, Name: event.ToolCallName}
 				activeToolCalls[event.ToolCallID] = tc
+				log.Printf("[orchestrator] tool_call_start name=%s", event.ToolCallName)
 
 			case llm.EventToolCallDelta:
 				if tc, ok := activeToolCalls[event.ToolCallID]; ok {
@@ -245,13 +255,17 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 				for _, tc := range activeToolCalls {
 					toolCalls = append(toolCalls, *tc)
 				}
+				log.Printf("[orchestrator] stream done events=%d text=%d tools=%d", eventCount, textParts.Len(), len(toolCalls))
 
 			case llm.EventError:
+				log.Printf("[orchestrator] stream error event: %v", event.Err)
 				ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("Stream error: %v", event.Err)}
 				ch <- OrchestratorEvent{Type: EventDone}
 				return
 			}
 		}
+
+		streamCancel()
 
 		// Add assistant message to history.
 		assistantMsg := llm.Message{Role: llm.RoleAssistant}
@@ -263,6 +277,7 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 
 		// If no tool calls, we're done.
 		if len(toolCalls) == 0 {
+			log.Printf("[orchestrator] handleLLM done text_len=%d", textParts.Len())
 			ch <- OrchestratorEvent{Type: EventDone}
 			return
 		}
@@ -270,11 +285,13 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 		// Execute tool calls and collect results.
 		var toolResults []llm.ToolResult
 		for _, tc := range toolCalls {
+			log.Printf("[orchestrator] executing tool name=%s", tc.Name)
 			ch <- OrchestratorEvent{Type: EventToolCall, ToolName: tc.Name, ToolArgs: parseJSONArgs(tc.Arguments)}
 
 			result := o.executeTool(ctx, tc)
 			toolResults = append(toolResults, result)
 
+			log.Printf("[orchestrator] tool result name=%s len=%d isError=%v", tc.Name, len(result.Content), result.IsError)
 			ch <- OrchestratorEvent{Type: EventToolResult, ToolName: tc.Name, ToolResult: result.Content}
 		}
 
@@ -285,9 +302,6 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 		opts = o.buildOptions()
 		opts.Tools = nil // Subsequent calls don't need tool definitions re-sent.
 	}
-
-	ch <- OrchestratorEvent{Type: EventText, Content: "Max tool iterations reached."}
-	ch <- OrchestratorEvent{Type: EventDone}
 }
 
 func (o *Orchestrator) executeTool(ctx context.Context, tc llm.ToolCall) llm.ToolResult {
