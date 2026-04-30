@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"os"
 	"fmt"
 	"log"
 	"strings"
@@ -154,42 +153,37 @@ func (a AppModel) View() tea.View {
 	chatW := a.width * 2 / 5
 	chatView := a.chat.View()
 	chatContent := fmt.Sprintf("%s\n%s", chatTitle.Render(fmt.Sprintf("Chat [%dx%d]", chatW, a.height)), chatView.Content)
-	chatPane := chatStyle.Width(chatW).Height(a.height - 2).Render(chatContent)
+	chatPane := chatStyle.Width(chatW).Height(a.height).Render(chatContent)
 
 	viewerStyle, viewerTitle := PaneStyles(a.focus == FocusViewer)
 	viewerW := a.width - chatW - 2
 	viewerView := a.viewer.View()
 	viewerContent := fmt.Sprintf("%s\n%s",
-		viewerTitle.Render(fmt.Sprintf("Sessions %s [%dx%d]", a.viewer.ActiveSession(), viewerW, a.height)),
+		viewerTitle.Render(fmt.Sprintf("Sessions %s", a.viewer.ActiveSession())),
 		viewerView.Content,
 	)
-	viewerPane := viewerStyle.Width(viewerW).Height(a.height - 2).Render(viewerContent)
+	viewerPane := viewerStyle.Width(viewerW).Height(a.height).Render(viewerContent)
+
+	// Trim panes to exactly terminal height — lipgloss may wrap over-wide
+	// content lines, producing more lines than Height() specifies.
+	chatPane = trimToLines(chatPane, a.height)
+	viewerPane = trimToLines(viewerPane, a.height)
 
 	joined := lipgloss.JoinHorizontal(lipgloss.Top, chatPane, viewerPane)
-
-	// Debug: log line counts to catch overflow.
-	chatLines := strings.Count(chatContent, "\n") + 1
-	chatPaneLines := strings.Count(chatPane, "\n") + 1
-	viewerLines := strings.Count(viewerContent, "\n") + 1
-	viewerPaneLines := strings.Count(viewerPane, "\n") + 1
-	joinedLines := strings.Count(joined, "\n") + 1
-	log.Printf("[tui/view] term=%dx%d chatContent=%d chatPane=%d viewerContent=%d viewerPane=%d joined=%d",
-		a.width, a.height, chatLines, chatPaneLines, viewerLines, viewerPaneLines, joinedLines)
-
-	// Dump raw strings for diagnosis (first frame only).
-	if !a.welcomed {
-		a.welcomed = true
-		go func() {
-			os.WriteFile("/tmp/fingersaver_chatContent.txt", []byte(chatContent), 0644)
-			os.WriteFile("/tmp/fingersaver_chatPane.txt", []byte(chatPane), 0644)
-			os.WriteFile("/tmp/fingersaver_viewerContent.txt", []byte(viewerContent), 0644)
-			os.WriteFile("/tmp/fingersaver_viewerPane.txt", []byte(viewerPane), 0644)
-		}()
-	}
 
 	v := tea.NewView(joined)
 	v.AltScreen = true
 	return v
+}
+
+// trimToLines truncates s to at most maxLines lines by removing from the top.
+func trimToLines(s string, maxLines int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= maxLines {
+		return s
+	}
+	// Keep bottom border + content, drop overflow from top.
+	return strings.Join(lines[len(lines)-maxLines:], "\n")
 }
 
 func (a *AppModel) processOrchestratorInput(text string) {
