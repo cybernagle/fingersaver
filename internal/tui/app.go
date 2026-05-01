@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -31,7 +33,7 @@ type AppModel struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	sendFn       func(tea.Msg)
-	lastOutput   string
+	lastOutput   map[string]string
 }
 
 type tmuxClient interface {
@@ -42,18 +44,19 @@ type tmuxClient interface {
 func NewAppModel(orch *agent.Orchestrator, tc tmuxClient) AppModel {
 	ctx, cancel := context.WithCancel(context.Background())
 	return AppModel{
-		chat:         NewChatModel(),
-		viewer:       NewViewerModel(),
-		focus:        FocusChat,
+		chat:       NewChatModel(),
+		viewer:     NewViewerModel(),
+		focus:      FocusChat,
 		orchestrator: orch,
-		tmuxClient:   tc,
-		ctx:          ctx,
-		cancel:       cancel,
+		tmuxClient: tc,
+		ctx:        ctx,
+		cancel:     cancel,
+		lastOutput: make(map[string]string),
 	}
 }
 
 func (a AppModel) Init() tea.Cmd {
-	return tickCmd()
+	return tea.Batch(tickCmd(), cursorBlinkCmd())
 }
 
 func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -95,7 +98,20 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, a.pollTmux())
 		cmds = append(cmds, tickCmd())
 
+	case SessionListMsg:
+		// Prune lastOutput entries for removed sessions.
+		activeSet := make(map[string]struct{}, len(msg.Sessions))
+		for _, s := range msg.Sessions {
+			activeSet[s] = struct{}{}
+		}
+		for s := range a.lastOutput {
+			if _, ok := activeSet[s]; !ok {
+				delete(a.lastOutput, s)
+			}
+		}
+
 	case combinedTmuxMsg:
+		a.lastOutput[msg.session] = msg.output
 		a.viewer.AppendOutput(msg.session, msg.output)
 		m2, cmd2 := a.viewer.Update(SessionListMsg{Sessions: msg.sessions})
 		a.viewer = m2.(ViewerModel)
@@ -103,6 +119,10 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return a, tea.Batch(cmds...)
 	case OrchestratorEventMsg:
+		// When switch_session tool completes, update viewer active session.
+		if msg.Type == "tool_result" && msg.ToolName == "switch_session" && msg.Content != "" {
+			a.viewer.SetActiveSession(msg.Content)
+		}
 		m, cmd := a.chat.Update(msg)
 		a.chat = m.(ChatModel)
 		cmds = append(cmds, cmd)
@@ -116,7 +136,6 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat = m.(ChatModel)
 			cmds = append(cmds, cmd)
 		} else {
-			a.forwardKeyToTmux(kmsg.String())
 			m, cmd := a.viewer.Update(kmsg)
 			a.viewer = m.(ViewerModel)
 			cmds = append(cmds, cmd)
@@ -136,31 +155,69 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (a AppModel) View() tea.View {
 	if a.width == 0 {
-		return tea.NewView("Loading...")
+		v := tea.NewView("Loading...")
+		v.AltScreen = true
+		return v
 	}
 
-	chatStyle, chatTitle := PaneStyles(a.focus == FocusChat)
+	chatStyle := BorderStyle(a.focus == FocusChat)
 	chatW := a.width * 2 / 5
 	chatView := a.chat.View()
-	chatContent := fmt.Sprintf("%s\n%s", chatTitle.Render("Chat"), chatView.Content)
+	chatContent := fmt.Sprintf("%s\n%s", chatTitleStyle.Render("Chat"), chatView.Content)
 	chatPane := chatStyle.Width(chatW).Height(a.height).Render(chatContent)
 
-	viewerStyle, viewerTitle := PaneStyles(a.focus == FocusViewer)
+	viewerStyle := BorderStyle(a.focus == FocusViewer)
 	viewerW := a.width - chatW - 2
 	viewerView := a.viewer.View()
 	viewerContent := fmt.Sprintf("%s\n%s",
-		viewerTitle.Render(fmt.Sprintf("Sessions %s", a.viewer.ActiveSession())),
+		viewerTitleStyle.Render(fmt.Sprintf("Sessions %s", a.viewer.ActiveSession())),
 		viewerView.Content,
 	)
 	viewerPane := viewerStyle.Width(viewerW).Height(a.height).Render(viewerContent)
 
+	// Trim panes to exactly terminal height — lipgloss may wrap over-wide
+	// content lines, producing more lines than Height() specifies.
+	chatPane = trimToLines(chatPane, a.height)
+	viewerPane = trimToLines(viewerPane, a.height)
+
 	joined := lipgloss.JoinHorizontal(lipgloss.Top, chatPane, viewerPane)
-	return tea.NewView(joined)
+
+	v := tea.NewView(joined)
+	v.AltScreen = true
+	return v
+}
+
+// trimToLines truncates s to at most maxLines lines while preserving the
+// first and last lines (rendered pane border/header and border/footer).
+func trimToLines(s string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) <= maxLines {
+		return s
+	}
+	if maxLines == 1 {
+		return lines[0]
+	}
+	// Reserve first and last lines (borders), trim inner content from top.
+	inner := lines[1 : len(lines)-1]
+	budget := maxLines - 2
+	if len(inner) > budget {
+		inner = inner[len(inner)-budget:]
+	}
+	result := make([]string, 0, 2+len(inner))
+	result = append(result, lines[0])
+	result = append(result, inner...)
+	result = append(result, lines[len(lines)-1])
+	return strings.Join(result, "\n")
 }
 
 func (a *AppModel) processOrchestratorInput(text string) {
+	log.Printf("[tui] processOrchestratorInput start textLen=%d", len(text))
 	events, err := a.orchestrator.ProcessInput(a.ctx, text)
 	if err != nil {
+		log.Printf("[tui] ProcessInput error: %v", err)
 		a.forwardEvent(agent.OrchestratorEvent{
 			Type:    agent.EventText,
 			Content: fmt.Sprintf("Error: %v", err),
@@ -168,8 +225,19 @@ func (a *AppModel) processOrchestratorInput(text string) {
 		a.forwardEvent(agent.OrchestratorEvent{Type: agent.EventDone})
 		return
 	}
+	count := 0
+	doneSeen := false
 	for e := range events {
 		a.forwardEvent(e)
+		count++
+		if e.Type == agent.EventDone {
+			doneSeen = true
+		}
+	}
+	log.Printf("[tui] processOrchestratorInput done events=%d", count)
+	// Ensure done event if stream closed without one.
+	if !doneSeen && a.sendFn != nil {
+		a.sendFn(OrchestratorEventMsg{Type: "done"})
 	}
 }
 
@@ -201,18 +269,13 @@ func (a AppModel) pollTmux() tea.Cmd {
 		// Capture output from active session.
 		active := a.viewer.ActiveSession()
 		if active != "" {
-			if s := state.FindSession(active); s != nil {
-				pane := s.ActivePane()
-				if pane != nil && pane.ID != "" {
-					cmd := tmux.CapturePaneCmd(pane.ID)
-					if out, err := a.tmuxClient.Exec(cmd); err == nil && out != "" && out != a.lastOutput {
-							a.lastOutput = out
-						return combinedTmuxMsg{
-							sessions: names,
-							output:   out,
-							session:  active,
-						}
-					}
+			cmd := tmux.CapturePaneCmd(active)
+			last := a.lastOutput[active]
+			if out, err := a.tmuxClient.Exec(cmd); err == nil && out != "" && out != last {
+				return combinedTmuxMsg{
+					sessions: names,
+					output:   out,
+					session:  active,
 				}
 			}
 		}
@@ -225,31 +288,6 @@ type combinedTmuxMsg struct {
 	sessions []string
 	output   string
 	session  string
-}
-
-func (a *AppModel) forwardKeyToTmux(key string) {
-	if a.tmuxClient == nil || a.viewer.ActiveSession() == "" {
-		return
-	}
-	tmuxKey := mapTmuxKey(key)
-	if tmuxKey != "" {
-		cmd := tmux.SendKeysCmd(a.viewer.ActiveSession(), tmuxKey)
-		a.tmuxClient.Exec(cmd)
-	}
-}
-
-func mapTmuxKey(key string) string {
-	mappings := map[string]string{
-		"up": "Up", "down": "Down", "left": "Left", "right": "Right",
-		"space": "Space",
-	}
-	if mapped, ok := mappings[key]; ok {
-		return mapped
-	}
-	if len(key) == 1 {
-		return key
-	}
-	return ""
 }
 
 func (a *AppModel) SetSendFn(fn func(tea.Msg)) {

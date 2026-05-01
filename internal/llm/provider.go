@@ -11,13 +11,13 @@ type Provider interface {
 	Name() string
 }
 
-// NewProvider creates a provider by name with the given API key.
-func NewProvider(providerName, apiKey string) (Provider, error) {
+// NewProvider creates a provider by name with the given API key and optional base URL.
+func NewProvider(providerName, apiKey, baseURL string) (Provider, error) {
 	switch providerName {
 	case "anthropic":
-		return NewAnthropicProvider(apiKey), nil
+		return NewAnthropicProvider(apiKey, baseURL), nil
 	case "openai":
-		return NewOpenAIProvider(apiKey), nil
+		return NewOpenAIProvider(apiKey, baseURL), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", providerName)
 	}

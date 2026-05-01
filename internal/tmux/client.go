@@ -96,8 +96,8 @@ func (c *Client) Stop() error {
 
 	close(c.notifs)
 
-	killCmd := exec.Command("tmux", "-S", c.socketPath, "kill-server")
-	killCmd.Run()
+	// Kill the dedicated tmux server and remove the socket.
+	exec.Command("tmux", "-S", c.socketPath, "kill-server").Run()
 	os.Remove(c.socketPath)
 
 	return nil

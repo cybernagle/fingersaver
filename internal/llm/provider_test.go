@@ -8,17 +8,17 @@ import (
 )
 
 func TestNewProviderValid(t *testing.T) {
-	p, err := NewProvider("anthropic", "test-key")
+	p, err := NewProvider("anthropic", "test-key", "")
 	require.NoError(t, err)
 	assert.Equal(t, "anthropic", p.Name())
 
-	p, err = NewProvider("openai", "test-key")
+	p, err = NewProvider("openai", "test-key", "")
 	require.NoError(t, err)
 	assert.Equal(t, "openai", p.Name())
 }
 
 func TestNewProviderInvalid(t *testing.T) {
-	_, err := NewProvider("invalid", "test-key")
+	_, err := NewProvider("invalid", "test-key", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported provider")
 }
@@ -55,7 +55,7 @@ func TestMessageTypes(t *testing.T) {
 }
 
 func TestAnthropicBuildParams(t *testing.T) {
-	p := NewAnthropicProvider("test-key")
+	p := NewAnthropicProvider("test-key", "")
 	params, err := p.buildParams([]Message{
 		{Role: RoleUser, Content: "hello"},
 	}, GenerateOptions{
@@ -70,7 +70,7 @@ func TestAnthropicBuildParams(t *testing.T) {
 }
 
 func TestAnthropicBuildParamsWithTools(t *testing.T) {
-	p := NewAnthropicProvider("test-key")
+	p := NewAnthropicProvider("test-key", "")
 	params, err := p.buildParams([]Message{
 		{Role: RoleUser, Content: "list sessions"},
 	}, GenerateOptions{
@@ -94,7 +94,7 @@ func TestAnthropicBuildParamsWithTools(t *testing.T) {
 }
 
 func TestAnthropicBuildParamsWithToolResult(t *testing.T) {
-	p := NewAnthropicProvider("test-key")
+	p := NewAnthropicProvider("test-key", "")
 	params, err := p.buildParams([]Message{
 		{Role: RoleUser, Content: "list sessions"},
 		{Role: RoleAssistant, ToolCalls: []ToolCall{
@@ -112,7 +112,7 @@ func TestAnthropicBuildParamsWithToolResult(t *testing.T) {
 }
 
 func TestOpenAIBuildParams(t *testing.T) {
-	p := NewOpenAIProvider("test-key")
+	p := NewOpenAIProvider("test-key", "")
 	params, err := p.buildParams([]Message{
 		{Role: RoleUser, Content: "hello"},
 	}, GenerateOptions{
@@ -126,7 +126,7 @@ func TestOpenAIBuildParams(t *testing.T) {
 }
 
 func TestOpenAIBuildParamsWithTools(t *testing.T) {
-	p := NewOpenAIProvider("test-key")
+	p := NewOpenAIProvider("test-key", "")
 	params, err := p.buildParams([]Message{
 		{Role: RoleUser, Content: "list sessions"},
 	}, GenerateOptions{

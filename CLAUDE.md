@@ -114,7 +114,7 @@ go test ./... -tags=integration -v
 
 ## Technical Constraints
 
-- Go 1.22+, no CGO
+- Go 1.26.1+, no CGO
 - Bubbletea v2 (`charm.land/bubbletea/v2`)
 - Lipgloss v2 (`charm.land/lipgloss/v2`)
 - tmux must be installed on the host

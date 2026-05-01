@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"fmt"
+	"log"
+	"time"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -12,8 +14,12 @@ type OpenAIProvider struct {
 	client *openai.Client
 }
 
-func NewOpenAIProvider(apiKey string) *OpenAIProvider {
-	client := openai.NewClient(option.WithAPIKey(apiKey))
+func NewOpenAIProvider(apiKey string, baseURL string) *OpenAIProvider {
+	opts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if baseURL != "" {
+		opts = append(opts, option.WithBaseURL(baseURL))
+	}
+	client := openai.NewClient(opts...)
 	return &OpenAIProvider{client: &client}
 }
 
@@ -29,8 +35,11 @@ func (p *OpenAIProvider) Stream(ctx context.Context, messages []Message, opts Ge
 
 	go func() {
 		defer close(ch)
+		start := time.Now()
+		log.Printf("[llm/openai] stream start model=%s", opts.Model)
 
 		stream := p.client.Chat.Completions.NewStreaming(ctx, params)
+		textCount := 0
 
 		for stream.Next() {
 			evt := stream.Current()
@@ -40,6 +49,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, messages []Message, opts Ge
 			delta := evt.Choices[0].Delta
 
 			if delta.Content != "" {
+				textCount++
 				select {
 				case ch <- StreamEvent{Type: EventTextDelta, Text: delta.Content}:
 				case <-ctx.Done():
@@ -82,10 +92,13 @@ func (p *OpenAIProvider) Stream(ctx context.Context, messages []Message, opts Ge
 		}
 
 		if err := stream.Err(); err != nil {
+			log.Printf("[llm/openai] stream error: %v elapsed=%s", err, time.Since(start).Round(time.Millisecond))
 			select {
 			case ch <- StreamEvent{Type: EventError, Err: fmt.Errorf("openai stream: %w", err)}:
 			case <-ctx.Done():
 			}
+		} else {
+			log.Printf("[llm/openai] stream done text_deltas=%d elapsed=%s", textCount, time.Since(start).Round(time.Millisecond))
 		}
 	}()
 

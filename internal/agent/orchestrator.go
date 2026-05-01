@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/naglezhang/fingersaver/internal/llm"
 )
@@ -40,8 +42,6 @@ type OrchestratorEvent struct {
 	ToolResult string
 }
 
-const maxToolIterations = 10
-
 type Orchestrator struct {
 	provider     llm.Provider
 	tc           TmuxClient
@@ -53,6 +53,7 @@ type Orchestrator struct {
 	messages     []llm.Message
 	systemPrompt string
 	model        string
+	callTimeout  time.Duration
 }
 
 func NewOrchestrator(provider llm.Provider, tc TmuxClient, hooks *HookManager, tools []Tool) *Orchestrator {
@@ -66,12 +67,12 @@ func NewOrchestrator(provider llm.Provider, tc TmuxClient, hooks *HookManager, t
 	}
 
 	return &Orchestrator{
-		provider:     provider,
-		tc:           tc,
-		tools:        tools,
-		toolMap:      toolMap,
-		hooks:        hooks,
-		systemPrompt: defaultSystemPrompt(),
+		provider:    provider,
+		tc:          tc,
+		tools:       tools,
+		toolMap:     toolMap,
+		hooks:       hooks,
+		callTimeout: 60 * time.Second,
 	}
 }
 
@@ -81,6 +82,10 @@ func (o *Orchestrator) SetSystemPrompt(prompt string) {
 
 func (o *Orchestrator) SetModel(model string) {
 	o.model = model
+}
+
+func (o *Orchestrator) SetCallTimeout(d time.Duration) {
+	o.callTimeout = d
 }
 
 func (o *Orchestrator) SetCommandRegistry(cr *CommandRegistry) {
@@ -208,14 +213,23 @@ func (o *Orchestrator) handleMention(ctx context.Context, ch chan<- Orchestrator
 }
 
 func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEvent, input string) {
+	const maxToolIterations = 10
+
 	o.appendMessage(llm.Message{Role: llm.RoleUser, Content: input})
 
 	opts := o.buildOptions()
+	log.Printf("[orchestrator] handleLLM start inputLen=%d model=%s", len(input), opts.Model)
 
 	for i := 0; i < maxToolIterations; i++ {
 		msgs := o.snapshotMessages()
-		stream, err := o.provider.Stream(ctx, msgs, opts)
+		log.Printf("[orchestrator] LLM call iteration=%d messages=%d", i, len(msgs))
+
+		// Timeout each LLM call to avoid hanging forever.
+		streamCtx, streamCancel := context.WithTimeout(ctx, o.callTimeout)
+		stream, err := o.provider.Stream(streamCtx, msgs, opts)
 		if err != nil {
+			streamCancel()
+			log.Printf("[orchestrator] LLM stream error: %v", err)
 			ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("LLM error: %v", err)}
 			ch <- OrchestratorEvent{Type: EventDone}
 			return
@@ -224,8 +238,10 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 		var textParts strings.Builder
 		var toolCalls []llm.ToolCall
 		activeToolCalls := make(map[string]*llm.ToolCall)
+		eventCount := 0
 
 		for event := range stream {
+			eventCount++
 			switch event.Type {
 			case llm.EventTextDelta:
 				textParts.WriteString(event.Text)
@@ -234,6 +250,7 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 			case llm.EventToolCallStart:
 				tc := &llm.ToolCall{ID: event.ToolCallID, Name: event.ToolCallName}
 				activeToolCalls[event.ToolCallID] = tc
+				log.Printf("[orchestrator] tool_call_start name=%s", event.ToolCallName)
 
 			case llm.EventToolCallDelta:
 				if tc, ok := activeToolCalls[event.ToolCallID]; ok {
@@ -245,13 +262,18 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 				for _, tc := range activeToolCalls {
 					toolCalls = append(toolCalls, *tc)
 				}
+				log.Printf("[orchestrator] stream done events=%d text=%d tools=%d", eventCount, textParts.Len(), len(toolCalls))
 
 			case llm.EventError:
+				log.Printf("[orchestrator] stream error event: %v", event.Err)
 				ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("Stream error: %v", event.Err)}
 				ch <- OrchestratorEvent{Type: EventDone}
+				streamCancel()
 				return
 			}
 		}
+
+		streamCancel()
 
 		// Add assistant message to history.
 		assistantMsg := llm.Message{Role: llm.RoleAssistant}
@@ -263,6 +285,7 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 
 		// If no tool calls, we're done.
 		if len(toolCalls) == 0 {
+			log.Printf("[orchestrator] handleLLM done text_len=%d", textParts.Len())
 			ch <- OrchestratorEvent{Type: EventDone}
 			return
 		}
@@ -270,12 +293,14 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 		// Execute tool calls and collect results.
 		var toolResults []llm.ToolResult
 		for _, tc := range toolCalls {
+			log.Printf("[orchestrator] executing tool name=%s", tc.Name)
 			ch <- OrchestratorEvent{Type: EventToolCall, ToolName: tc.Name, ToolArgs: parseJSONArgs(tc.Arguments)}
 
 			result := o.executeTool(ctx, tc)
 			toolResults = append(toolResults, result)
 
-			ch <- OrchestratorEvent{Type: EventToolResult, ToolName: tc.Name, ToolResult: result.Content}
+			log.Printf("[orchestrator] tool result name=%s len=%d isError=%v", tc.Name, len(result.Content), result.IsError)
+			ch <- OrchestratorEvent{Type: EventToolResult, ToolName: tc.Name, Content: result.Content, ToolResult: result.Content}
 		}
 
 		// Add tool results to history.
@@ -286,7 +311,9 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 		opts.Tools = nil // Subsequent calls don't need tool definitions re-sent.
 	}
 
-	ch <- OrchestratorEvent{Type: EventText, Content: "Max tool iterations reached."}
+	// Iteration cap reached.
+	log.Printf("[orchestrator] handleLLM hit max iterations=%d", maxToolIterations)
+	ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("Reached maximum tool iterations (%d). Stopping.", maxToolIterations)}
 	ch <- OrchestratorEvent{Type: EventDone}
 }
 
