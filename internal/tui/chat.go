@@ -205,7 +205,7 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					c.selectedSugg++
 				}
 				return c, nil
-			case "tab", "enter":
+			case "tab":
 				if c.selectedSugg >= len(suggs) {
 					c.selectedSugg = len(suggs) - 1
 				}
@@ -399,6 +399,9 @@ func (c ChatModel) View() tea.View {
 		suggLines = 5
 	}
 	reserveLines := 1 + suggLines // input + suggestions
+	if len(c.sessions) > 0 {
+		reserveLines++ // session status bar
+	}
 
 	maxContentLines := targetLines - reserveLines
 	if maxContentLines < 1 {

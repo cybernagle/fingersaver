@@ -32,8 +32,9 @@ func TestDetectServerNone(t *testing.T) {
 	defer os.Setenv("TMUX", orig)
 	os.Setenv("TMUX", "")
 
-	// If a tmux server is actually running, skip this test.
-	if info := DetectServer(); info != nil {
+	info := DetectServer()
+	if info != nil {
 		t.Skip("tmux server is running, skipping nil-detection test")
 	}
+	assert.Nil(t, info)
 }

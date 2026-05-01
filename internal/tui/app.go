@@ -100,8 +100,8 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SubmitMsg:
 		// Auto-switch viewer to @mentioned session.
 		if strings.HasPrefix(msg.Text, "@") {
-			if name, _, ok := strings.Cut(msg.Text[1:], " "); ok && name != "" {
-				a.viewer.SetActiveSession(name)
+			if fields := strings.Fields(msg.Text[1:]); len(fields) > 0 && fields[0] != "" {
+				a.viewer.SetActiveSession(fields[0])
 			}
 		}
 		if a.orchestrator != nil {
