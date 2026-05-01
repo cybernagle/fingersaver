@@ -81,7 +81,7 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "tab":
+		case "ctrl+o":
 			if a.focus == FocusChat {
 				a.focus = FocusViewer
 				a.chat.SetFocused(false)
@@ -98,6 +98,12 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case SubmitMsg:
+		// Auto-switch viewer to @mentioned session.
+		if strings.HasPrefix(msg.Text, "@") {
+			if name, _, ok := strings.Cut(msg.Text[1:], " "); ok && name != "" {
+				a.viewer.SetActiveSession(name)
+			}
+		}
 		if a.orchestrator != nil {
 			go a.processOrchestratorInput(msg.Text)
 		}

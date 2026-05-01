@@ -205,7 +205,7 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					c.selectedSugg++
 				}
 				return c, nil
-			case "tab":
+			case "tab", "enter":
 				s := suggs[c.selectedSugg]
 				// For @ completions, set sticky target instead of filling input.
 				if strings.HasPrefix(s.Text, "@") {
@@ -428,23 +428,39 @@ func (c ChatModel) View() tea.View {
 		}
 	}
 
+	// Session status bar.
+	if len(c.sessions) > 0 {
+		bar := statusStyle.Render("sessions: " + strings.Join(c.sessions, " | "))
+		contentLines = append(contentLines, bar)
+	}
+
 	// Input line.
 	prefix := "> "
 	if c.targetSession != "" {
-		prefix = statusStyle.Render("@"+c.targetSession+" > ")
+		prefix = statusStyle.Render("@" + c.targetSession + " (Esc) > ")
 	}
-	cursorLine := prefix + c.input
-	if c.focused && !c.working {
-		pos := c.cursorByteIdx()
-		before := c.input[:pos]
-		after := c.input[pos:]
-		ch := "█"
-		if !c.cursorVisible {
-			ch = " "
+	if c.input == "" && c.targetSession == "" && !c.working {
+		displayInput := ""
+		if len(c.sessions) == 0 {
+			displayInput = statusStyle.Render("Type /create <name> to start a session...")
+		} else {
+			displayInput = statusStyle.Render("Type @ to mention session, / for commands...")
 		}
-		cursorLine = prefix + before + ch + after
+		contentLines = append(contentLines, chatInputStyle.Render(prefix+displayInput))
+	} else {
+		cursorLine := prefix + c.input
+		if c.focused && !c.working {
+			pos := c.cursorByteIdx()
+			before := c.input[:pos]
+			after := c.input[pos:]
+			ch := "█"
+			if !c.cursorVisible {
+				ch = " "
+			}
+			cursorLine = prefix + before + ch + after
+		}
+		contentLines = append(contentLines, chatInputStyle.Render(cursorLine))
 	}
-	contentLines = append(contentLines, chatInputStyle.Render(cursorLine))
 
 	output := strings.Join(contentLines, "\n")
 	return tea.NewView(output)
