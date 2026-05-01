@@ -26,6 +26,7 @@ var (
 	showVersion = flag.Bool("version", false, "Show version")
 	showConfig  = flag.Bool("config", false, "Show current configuration and exit")
 	chatMode    = flag.Bool("chat", false, "CLI chat mode (no TUI, for testing)")
+	phoneLayout = flag.Bool("phone", false, "Use phone layout (vertical split)")
 )
 
 const version = "0.1.0"
@@ -119,6 +120,9 @@ func main() {
 
 	// Create and run TUI.
 	app := tui.NewAppModel(orch, tc)
+	if *phoneLayout {
+		app.SetLayout(tui.LayoutPhone)
+	}
 
 	// Set up chat history persistence.
 	if cfg.ChatHistoryPath != "" {
@@ -149,46 +153,55 @@ func main() {
 // Returns the socket path and whether FingerSaver owns the server.
 func resolveTmuxServer(cfg *config.Config, chatMode bool) (string, bool, error) {
 	switch cfg.TmuxMode {
-	case "dedicated":
+	case config.TmuxModeDedicated:
 		return cfg.TmuxSocketPath, true, nil
-	case "shared":
+	case config.TmuxModeShared:
 		info := tmux.DetectServer()
 		if info == nil {
 			return "", false, fmt.Errorf("tmux_mode=shared but no running tmux server found")
 		}
 		log.Printf("[main] using shared tmux server: %s", info.SocketPath)
 		return info.SocketPath, false, nil
-	case "auto":
+	case config.TmuxModeAuto:
 		info := tmux.DetectServer()
 		if info == nil {
 			log.Printf("[main] no existing tmux server, creating dedicated one")
 			return cfg.TmuxSocketPath, true, nil
 		}
-		// Interactive prompt if stdin is a terminal and not in chat mode.
 		if isTerminal(os.Stdin) && !chatMode {
 			fmt.Fprintf(os.Stderr, "Found tmux server (%s, %d sessions). Use it? [Y/n]: ",
 				info.SocketPath, len(info.Sessions))
 			reader := bufio.NewReader(os.Stdin)
 			line, err := reader.ReadString('\n')
 			if err != nil {
-				// EOF or I/O error — default to using detected server.
 				log.Printf("[main] stdin read error (%v), using detected server", err)
+				cfg.TmuxMode = config.TmuxModeShared
+				saveConfig(cfg)
 				return info.SocketPath, false, nil
 			}
 			line = strings.TrimSpace(strings.ToLower(line))
 			if line == "" || line == "y" || line == "yes" {
 				log.Printf("[main] using existing tmux server: %s", info.SocketPath)
+				cfg.TmuxMode = config.TmuxModeShared
+				saveConfig(cfg)
 				return info.SocketPath, false, nil
 			}
 		} else {
-			// Non-interactive: auto-use the detected server.
 			log.Printf("[main] auto-detected tmux server: %s", info.SocketPath)
 			return info.SocketPath, false, nil
 		}
 		log.Printf("[main] user chose dedicated server")
+		cfg.TmuxMode = config.TmuxModeDedicated
+		saveConfig(cfg)
 		return cfg.TmuxSocketPath, true, nil
 	default:
 		return cfg.TmuxSocketPath, true, nil
+	}
+}
+
+func saveConfig(cfg *config.Config) {
+	if err := cfg.Save(); err != nil {
+		log.Printf("[main] warning: could not save config: %v", err)
 	}
 }
 
@@ -256,6 +269,7 @@ FLAGS
   --version       Show version
   --config        Show current configuration and exit
   --chat          CLI chat mode (no TUI, for e2e testing)
+  --phone         Use phone layout (vertical split)
 
 CONFIGURATION
   FingerSaver reads from Claude settings (claude_dir/settings.json):
@@ -272,7 +286,7 @@ CONFIGURATION
   Or create ~/.fingersaver/config.json for persistent settings.
 
 KEY BINDINGS
-  Tab           Switch between Chat and Viewer panes
+  Ctrl+O        Switch between Chat and Viewer panes
   [ / ]         Switch between tmux sessions (in Viewer)
   Up/Down       Navigate input history (in Chat)
   Enter         Send message
@@ -281,5 +295,7 @@ KEY BINDINGS
 CHAT COMMANDS
   @session text   Send text to a tmux session
   /help           Show available slash commands
+  /layout phone   Switch to vertical (phone) layout
+  /layout default Switch to horizontal (default) layout
 `
 }

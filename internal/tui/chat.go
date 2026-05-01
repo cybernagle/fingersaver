@@ -75,6 +75,9 @@ type ChatModel struct {
 	commands      []CommandSuggestion
 	sessions      []string
 	selectedSugg  int
+	scrollOffset  int
+	ctrlCCount    int       // consecutive Ctrl+C presses
+	lastCtrlC     time.Time // time of last Ctrl+C
 }
 
 func NewChatModel() ChatModel {
@@ -204,7 +207,8 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						c.input = ""
 						c.cursor = 0
 						c.selectedSugg = 0
-						return c, nil
+						log.Printf("[chat] Tab @%s -> SessionTargetMsg", name)
+						return c, func() tea.Msg { return SessionTargetMsg{Name: name} }
 					}
 				}
 				c.input = s.Text
@@ -238,6 +242,10 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			c.historyIdx = len(c.inputHistory)
 			c.input = ""
 			c.cursor = 0
+			// Layout commands are local-only: skip working state.
+			if strings.HasPrefix(text, "/layout ") {
+				return c, func() tea.Msg { return SubmitMsg{Text: text} }
+			}
 			c.working = true
 			c.workingMsg = ""
 			c.workStart = time.Now()
@@ -253,8 +261,6 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				prevPos := runeIdxToByte(c.input, c.cursor-1)
 				c.input = c.input[:prevPos] + c.input[pos:]
 				c.cursor--
-			} else if c.cursor == 0 && c.input == "" && c.targetSession != "" {
-				c.targetSession = ""
 			}
 		case "delete":
 			if c.cursor < c.runeCount() {
@@ -285,12 +291,26 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				c.input = ""
 			}
 			c.cursor = c.runeCount()
+		case "ctrl+c":
+			if time.Since(c.lastCtrlC) > 2*time.Second {
+				c.ctrlCCount = 0
+			}
+			c.lastCtrlC = time.Now()
+			c.ctrlCCount++
+			if c.ctrlCCount >= 2 {
+				return c, tea.Quit
+			}
+			if c.targetSession != "" {
+				c.targetSession = ""
+			}
+			c.appendMessage("system", "Ctrl+C again to quit")
+			return c, nil
 		case "esc":
 			if c.targetSession != "" {
 				c.targetSession = ""
 				return c, nil
 			}
-		case "ctrl+c":
+		case "ctrl+d":
 			return c, tea.Quit
 		default:
 			text := msg.Text
@@ -303,6 +323,7 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if text != "" {
+				c.scrollOffset = 0
 				pos := c.cursorByteIdx()
 				c.input = c.input[:pos] + text + c.input[pos:]
 				c.cursor += utf8.RuneCountInString(text)
@@ -331,6 +352,16 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			c.flushStreamingToHistory()
 			c.working = false
 			c.workingMsg = ""
+		}
+
+	case tea.MouseWheelMsg:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			c.scrollOffset++
+		case tea.MouseWheelDown:
+			if c.scrollOffset > 0 {
+				c.scrollOffset--
+			}
 		}
 	}
 
@@ -394,7 +425,23 @@ func (c ChatModel) View() tea.View {
 		maxContentLines = 1
 	}
 	if len(contentLines) > maxContentLines {
-		contentLines = contentLines[len(contentLines)-maxContentLines:]
+		offset := c.scrollOffset
+		maxOff := len(contentLines) - maxContentLines
+		if offset > maxOff {
+			offset = maxOff
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		start := len(contentLines) - maxContentLines - offset
+		if start < 0 {
+			start = 0
+		}
+		end := start + maxContentLines
+		if end > len(contentLines) {
+			end = len(contentLines)
+		}
+		contentLines = contentLines[start:end]
 	}
 	for len(contentLines) < maxContentLines {
 		contentLines = append(contentLines, "")
@@ -429,27 +476,29 @@ func (c ChatModel) View() tea.View {
 	// Input line.
 	prefix := "> "
 	if c.targetSession != "" {
-		prefix = statusStyle.Render("@" + c.targetSession + " (Esc) > ")
+		prefix = statusStyle.Render("@" + c.targetSession + " > ")
 	}
+	// Build cursor character.
+	cursorCh := " "
+	if c.focused && c.cursorVisible {
+		cursorCh = "█"
+	}
+
 	if c.input == "" && c.targetSession == "" && !c.working {
-		displayInput := ""
+		hint := ""
 		if len(c.sessions) == 0 {
-			displayInput = statusStyle.Render("Type /create <name> to start a session...")
+			hint = statusStyle.Render(" Type /create <name> to start a session...")
 		} else {
-			displayInput = statusStyle.Render("Type @ to mention session, / for commands...")
+			hint = statusStyle.Render(" Type @ to mention session, / for commands...")
 		}
-		contentLines = append(contentLines, chatInputStyle.Render(prefix+displayInput))
+		contentLines = append(contentLines, chatInputStyle.Render(prefix+cursorCh+hint))
 	} else {
 		cursorLine := prefix + c.input
 		if c.focused && !c.working {
 			pos := c.cursorByteIdx()
 			before := c.input[:pos]
 			after := c.input[pos:]
-			ch := "█"
-			if !c.cursorVisible {
-				ch = " "
-			}
-			cursorLine = prefix + before + ch + after
+			cursorLine = prefix + before + cursorCh + after
 		}
 		contentLines = append(contentLines, chatInputStyle.Render(cursorLine))
 	}

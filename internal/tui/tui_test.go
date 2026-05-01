@@ -419,25 +419,22 @@ func TestChatModelStickySessionPrepends(t *testing.T) {
 	assert.Empty(t, c.input)
 }
 
-func TestChatModelStickySessionClearedByBackspace(t *testing.T) {
-	c := NewChatModel()
-	c.SetSize(80, 24)
-	c.targetSession = "auth"
-	c.input = ""
-	c.cursor = 0
-
-	// Backspace on empty input clears targetSession.
-	m, _ := c.Update(tea.KeyPressMsg{Code: 127}) // backspace
-	c = m.(ChatModel)
-	assert.Equal(t, "", c.targetSession)
-}
-
-func TestChatModelStickySessionClearedByEscape(t *testing.T) {
+func TestChatModelStickySessionClearedByEsc(t *testing.T) {
 	c := NewChatModel()
 	c.SetSize(80, 24)
 	c.targetSession = "auth"
 
 	m, _ := c.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	c = m.(ChatModel)
+	assert.Equal(t, "", c.targetSession)
+}
+
+func TestChatModelStickySessionClearedByCtrlC(t *testing.T) {
+	c := NewChatModel()
+	c.SetSize(80, 24)
+	c.targetSession = "auth"
+
+	m, _ := c.Update(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'c'})
 	c = m.(ChatModel)
 	assert.Equal(t, "", c.targetSession)
 }
@@ -515,4 +512,110 @@ func TestChatModelSuggestionTabCompletes(t *testing.T) {
 	c = m.(ChatModel)
 	assert.Equal(t, "/create ", c.input)
 	assert.Equal(t, 8, c.cursor)
+}
+
+// --- Phone layout ---
+
+func TestAppModelPhoneLayoutView(t *testing.T) {
+	a := NewAppModel(nil, nil)
+	a.layout = LayoutPhone
+	a.width = 60
+	a.height = 40
+	a.recalcSizes()
+
+	view := a.View()
+	assert.True(t, view.AltScreen)
+	// Vertical layout should contain both Chat and Sessions titles.
+	assert.Contains(t, view.Content, "Chat")
+	assert.Contains(t, view.Content, "Sessions")
+}
+
+func TestAppModelLayoutSwitchCommand(t *testing.T) {
+	a := NewAppModel(nil, nil)
+	a.width = 120
+	a.height = 40
+	a.recalcSizes()
+
+	assert.Equal(t, LayoutDefault, a.layout)
+
+	// Switch to phone layout via command.
+	m, _ := a.Update(SubmitMsg{Text: "/layout phone"})
+	a = m.(AppModel)
+	assert.Equal(t, LayoutPhone, a.layout)
+	assert.True(t, a.layoutExplicit)
+
+	// Switch back.
+	m, _ = a.Update(SubmitMsg{Text: "/layout default"})
+	a = m.(AppModel)
+	assert.Equal(t, LayoutDefault, a.layout)
+}
+
+func TestAppModelAutoDetectNarrow(t *testing.T) {
+	a := NewAppModel(nil, nil)
+
+	// Narrow terminal triggers phone layout.
+	m, _ := a.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	a = m.(AppModel)
+	assert.Equal(t, LayoutPhone, a.layout)
+	assert.False(t, a.layoutExplicit)
+}
+
+func TestAppModelAutoRevertWide(t *testing.T) {
+	a := NewAppModel(nil, nil)
+
+	// Narrow -> phone layout.
+	m, _ := a.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	a = m.(AppModel)
+	assert.Equal(t, LayoutPhone, a.layout)
+
+	// Wide -> reverts to default.
+	m, _ = a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a = m.(AppModel)
+	assert.Equal(t, LayoutDefault, a.layout)
+}
+
+func TestAppModelExplicitLayoutNotOverridden(t *testing.T) {
+	a := NewAppModel(nil, nil)
+	a.layout = LayoutPhone
+	a.layoutExplicit = true
+	a.width = 120
+	a.height = 40
+	a.recalcSizes()
+
+	// Wide terminal should NOT override explicit phone layout.
+	m, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a = m.(AppModel)
+	assert.Equal(t, LayoutPhone, a.layout)
+}
+
+func TestChatModelStickyNoDoublePrefix(t *testing.T) {
+	c := NewChatModel()
+	c.SetSize(80, 24)
+	c.targetSession = "auth"
+	c.input = "@api do something"
+
+	// Submit should NOT double-prefix since input already starts with @.
+	m, cmd := c.Update(tea.KeyPressMsg{Code: 13}) // enter
+	c = m.(ChatModel)
+	require.NotNil(t, cmd)
+	assert.Equal(t, "@api do something", c.messages[0].Content)
+}
+
+func TestChatModelLayoutCommandNoWorkingState(t *testing.T) {
+	c := NewChatModel()
+	c.SetSize(80, 24)
+	c.input = "/layout phone"
+
+	m, cmd := c.Update(tea.KeyPressMsg{Code: 13}) // enter
+	c = m.(ChatModel)
+
+	// Should NOT enter working state or append a message.
+	assert.False(t, c.working)
+	assert.Empty(t, c.messages)
+	require.NotNil(t, cmd)
+	// Command should produce SubmitMsg for AppModel to handle.
+	msg := cmd()
+	submit, ok := msg.(SubmitMsg)
+	require.True(t, ok)
+	assert.Equal(t, "/layout phone", submit.Text)
 }

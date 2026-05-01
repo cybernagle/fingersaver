@@ -21,6 +21,9 @@ type OrchestratorEventMsg struct {
 // SessionListMsg carries the current session list.
 type SessionListMsg struct{ Sessions []string }
 
+// SessionTargetMsg is sent when the user selects a session via @ autocomplete.
+type SessionTargetMsg struct{ Name string }
+
 // FocusSwitchMsg toggles pane focus.
 type FocusSwitchMsg struct{}
 

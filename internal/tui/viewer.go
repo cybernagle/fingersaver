@@ -14,6 +14,7 @@ type ViewerModel struct {
 	width    int
 	height   int
 	focused  bool
+	compact  bool // phone layout: filter noise lines
 }
 
 func NewViewerModel() ViewerModel {
@@ -65,6 +66,10 @@ func (v ViewerModel) View() tea.View {
 
 	content := v.sessions[v.active]
 	lines := strings.Split(content, "\n")
+	if v.compact {
+		lines = filterNoiseLines(lines)
+	}
+
 	visibleHeight := v.height - 5
 	if visibleHeight < 1 {
 		visibleHeight = 1
@@ -76,7 +81,6 @@ func (v ViewerModel) View() tea.View {
 	}
 	visible := lines[start:]
 
-	// Render entire block once.
 	b.WriteString(viewerContentStyle.Render(strings.Join(visible, "\n")))
 
 	for i := len(visible); i < visibleHeight; i++ {
@@ -84,6 +88,37 @@ func (v ViewerModel) View() tea.View {
 	}
 
 	return tea.NewView(b.String())
+}
+
+// isNoiseLine returns true for lines that carry no useful content.
+func isNoiseLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return true
+	}
+	// Pure box-drawing / braille / separator lines.
+	allDecorative := true
+	for _, r := range trimmed {
+		if 0x2500 <= r && r <= 0x257F {
+			continue // box drawing
+		}
+		if r == '─' || r == '━' || r == '│' || r == '┃' {
+			continue
+		}
+		allDecorative = false
+		break
+	}
+	return allDecorative
+}
+
+func filterNoiseLines(lines []string) []string {
+	filtered := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if !isNoiseLine(l) {
+			filtered = append(filtered, l)
+		}
+	}
+	return filtered
 }
 
 func (v *ViewerModel) renderTabs() string {
@@ -150,6 +185,7 @@ func (v *ViewerModel) pruneSessions(active []string) {
 
 func (v *ViewerModel) SetFocused(f bool)         { v.focused = f }
 func (v *ViewerModel) SetSize(w, h int)          { v.width = w; v.height = h }
+func (v *ViewerModel) SetCompact(c bool)         { v.compact = c }
 func (v *ViewerModel) ActiveSession() string     { return v.active }
 func (v *ViewerModel) SetActiveSession(s string) { v.active = s }
 
