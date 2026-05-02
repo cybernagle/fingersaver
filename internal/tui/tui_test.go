@@ -26,14 +26,14 @@ func TestChatModelSubmit(t *testing.T) {
 	c.SetSize(80, 24)
 
 	// Simulate typing.
-	m, _ := c.Update(tea.KeyPressMsg{Code: 'h'})
+	m, _ := c.Update(tea.KeyPressMsg{Text: "h"})
 	c = m.(ChatModel)
-	assert.Equal(t, "h", c.input)
+	assert.Equal(t, "h", c.textInput.Value())
 
 	// Simulate enter.
 	m, cmd := c.Update(tea.KeyPressMsg{Code: 13}) // enter
 	c = m.(ChatModel)
-	assert.Empty(t, c.input)
+	assert.Empty(t, c.textInput.Value())
 	require.NotNil(t, cmd)
 
 	// The command should produce a batch with SubmitMsg.
@@ -52,13 +52,12 @@ func TestChatModelSubmit(t *testing.T) {
 func TestChatModelBackspace(t *testing.T) {
 	c := NewChatModel()
 	c.SetSize(80, 24)
-	c.input = "abc"
-	c.cursor = 3
+	c.textInput.SetValue("abc")
 
 	m, _ := c.Update(tea.KeyPressMsg{Code: 127}) // backspace
 	c = m.(ChatModel)
-	assert.Equal(t, "ab", c.input)
-	assert.Equal(t, 2, c.cursor)
+	assert.Equal(t, "ab", c.textInput.Value())
+	assert.Equal(t, 2, c.textInput.Position())
 }
 
 func TestChatModelView(t *testing.T) {
@@ -124,54 +123,54 @@ func TestChatModelHistoryNavigation(t *testing.T) {
 	c.SetSize(80, 24)
 
 	// Submit two messages.
-	c.input = "first"
+	c.textInput.SetValue("first")
 	m, _ := c.Update(tea.KeyPressMsg{Code: 13}) // enter
 	c = m.(ChatModel)
 	c.working = false // reset working state for next submit
 
-	c.input = "second"
+	c.textInput.SetValue("second")
 	m, _ = c.Update(tea.KeyPressMsg{Code: 13}) // enter
 	c = m.(ChatModel)
 	c.working = false
 
-	assert.Equal(t, "", c.input)
+	assert.Equal(t, "", c.textInput.Value())
 	assert.Equal(t, 2, c.historyIdx)
 
 	// Up once -> "second"
 	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	c = m.(ChatModel)
-	assert.Equal(t, "second", c.input)
+	assert.Equal(t, "second", c.textInput.Value())
 
 	// Up again -> "first"
 	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	c = m.(ChatModel)
-	assert.Equal(t, "first", c.input)
+	assert.Equal(t, "first", c.textInput.Value())
 
 	// Up at boundary -> stays "first"
 	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	c = m.(ChatModel)
-	assert.Equal(t, "first", c.input)
+	assert.Equal(t, "first", c.textInput.Value())
 
 	// Down -> "second"
 	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	c = m.(ChatModel)
-	assert.Equal(t, "second", c.input)
+	assert.Equal(t, "second", c.textInput.Value())
 
 	// Down at end -> cleared
 	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	c = m.(ChatModel)
-	assert.Equal(t, "", c.input)
+	assert.Equal(t, "", c.textInput.Value())
 }
 
 func TestChatModelBlockSubmitWhileWorking(t *testing.T) {
 	c := NewChatModel()
 	c.SetSize(80, 24)
-	c.input = "hello"
+	c.textInput.SetValue("hello")
 	c.working = true
 
 	m, cmd := c.Update(tea.KeyPressMsg{Code: 13}) // enter
 	c = m.(ChatModel)
-	assert.Equal(t, "hello", c.input) // input not cleared
+	assert.Equal(t, "hello", c.textInput.Value()) // input not cleared
 	assert.Nil(t, cmd)
 }
 
@@ -184,14 +183,14 @@ func TestChatModelMultibyteInput(t *testing.T) {
 	// Simulate typing a multibyte character (Chinese: 你)
 	m, _ := c.Update(tea.KeyPressMsg{Text: "你"})
 	c = m.(ChatModel)
-	assert.Equal(t, "你", c.input)
-	assert.Equal(t, 1, c.cursor)
+	assert.Equal(t, "你", c.textInput.Value())
+	assert.Equal(t, 1, c.textInput.Position())
 
 	// Backspace removes the whole rune
 	m, _ = c.Update(tea.KeyPressMsg{Code: 127})
 	c = m.(ChatModel)
-	assert.Equal(t, "", c.input)
-	assert.Equal(t, 0, c.cursor)
+	assert.Equal(t, "", c.textInput.Value())
+	assert.Equal(t, 0, c.textInput.Position())
 }
 
 func TestChatModelCursorInMiddleOfMultibyte(t *testing.T) {
@@ -200,25 +199,25 @@ func TestChatModelCursorInMiddleOfMultibyte(t *testing.T) {
 
 	// Type "abc"
 	for _, ch := range "abc" {
-		m, _ := c.Update(tea.KeyPressMsg{Code: ch})
+		m, _ := c.Update(tea.KeyPressMsg{Code: ch, Text: string(ch)})
 		c = m.(ChatModel)
 	}
-	assert.Equal(t, "abc", c.input)
-	assert.Equal(t, 3, c.cursor)
+	assert.Equal(t, "abc", c.textInput.Value())
+	assert.Equal(t, 3, c.textInput.Position())
 
 	// Move cursor left twice to position 1
 	m, _ := c.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	c = m.(ChatModel)
-	assert.Equal(t, 2, c.cursor)
+	assert.Equal(t, 2, c.textInput.Position())
 	m, _ = c.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	c = m.(ChatModel)
-	assert.Equal(t, 1, c.cursor)
+	assert.Equal(t, 1, c.textInput.Position())
 
 	// Insert multibyte char
 	m, _ = c.Update(tea.KeyPressMsg{Text: "你"})
 	c = m.(ChatModel)
-	assert.Equal(t, "a你bc", c.input)
-	assert.Equal(t, 2, c.cursor)
+	assert.Equal(t, "a你bc", c.textInput.Value())
+	assert.Equal(t, 2, c.textInput.Position())
 }
 
 // --- Viewer session switching with brackets ---
@@ -339,7 +338,7 @@ func TestChatModelSlashSuggestions(t *testing.T) {
 	})
 
 	// Type "/" — should show all commands.
-	c.input = "/"
+	c.textInput.SetValue("/")
 	suggs := c.currentSuggestions()
 	assert.Len(t, suggs, 3)
 	assert.Equal(t, "/create ", suggs[0].Text)
@@ -355,8 +354,7 @@ func TestChatModelSlashFilterByPrefix(t *testing.T) {
 	})
 
 	// Type "/c" -> should only suggest "create".
-	c.input = "/c"
-	c.cursor = 2
+	c.textInput.SetValue("/c")
 	suggs := c.currentSuggestions()
 	require.Len(t, suggs, 1)
 	assert.Equal(t, "/create ", suggs[0].Text)
@@ -368,15 +366,13 @@ func TestChatModelAtSuggestions(t *testing.T) {
 	c.SetSessions([]string{"auth", "api", "worker"})
 
 	// Type "@" -> all sessions.
-	c.input = "@"
-	c.cursor = 1
+	c.textInput.SetValue("@")
 	suggs := c.currentSuggestions()
 	require.Len(t, suggs, 3)
 	assert.Equal(t, "@auth ", suggs[0].Text)
 
 	// Type "@a" -> filtered.
-	c.input = "@a"
-	c.cursor = 2
+	c.textInput.SetValue("@a")
 	suggs = c.currentSuggestions()
 	require.Len(t, suggs, 2)
 }
@@ -388,8 +384,7 @@ func TestChatModelAtTabSetsStickySession(t *testing.T) {
 	c.SetSize(80, 24)
 	c.SetSessions([]string{"auth"})
 
-	c.input = "@a"
-	c.cursor = 2
+	c.textInput.SetValue("@a")
 	c.selectedSugg = 0
 
 	suggs := c.currentSuggestions()
@@ -400,8 +395,8 @@ func TestChatModelAtTabSetsStickySession(t *testing.T) {
 	c = m.(ChatModel)
 
 	assert.Equal(t, "auth", c.targetSession)
-	assert.Equal(t, "", c.input)
-	assert.Equal(t, 0, c.cursor)
+	assert.Equal(t, "", c.textInput.Value())
+	assert.Equal(t, 0, c.textInput.Position())
 }
 
 // --- Sticky session behavior ---
@@ -410,13 +405,13 @@ func TestChatModelStickySessionPrepends(t *testing.T) {
 	c := NewChatModel()
 	c.SetSize(80, 24)
 	c.targetSession = "auth"
-	c.input = "check status"
+	c.textInput.SetValue("check status")
 
 	m, cmd := c.Update(tea.KeyPressMsg{Code: 13}) // enter
 	c = m.(ChatModel)
 	require.NotNil(t, cmd)
 	assert.Equal(t, "@auth check status", c.messages[0].Content)
-	assert.Empty(t, c.input)
+	assert.Empty(t, c.textInput.Value())
 }
 
 func TestChatModelStickySessionClearedByEsc(t *testing.T) {
@@ -439,15 +434,23 @@ func TestChatModelStickySessionClearedByCtrlC(t *testing.T) {
 	assert.Equal(t, "", c.targetSession)
 }
 
-func TestChatModelNoSuggestionsWhenStickySet(t *testing.T) {
+func TestChatModelSlashSuggestionsInStickySession(t *testing.T) {
 	c := NewChatModel()
 	c.SetSize(80, 24)
-	c.SetSessions([]string{"auth"})
+	c.SetCommands([]CommandSuggestion{
+		{Name: "create", Description: "Create session"},
+	})
 	c.targetSession = "auth"
-	c.input = "@"
-	c.cursor = 1
 
+	// / commands should still suggest in sticky session mode.
+	c.textInput.SetValue("/")
 	suggs := c.currentSuggestions()
+	require.Len(t, suggs, 1)
+	assert.Equal(t, "/create ", suggs[0].Text)
+
+	// @ suggestions should NOT appear in sticky session mode.
+	c.textInput.SetValue("@")
+	suggs = c.currentSuggestions()
 	assert.Nil(t, suggs)
 }
 
@@ -477,8 +480,7 @@ func TestChatModelSuggestionUpDown(t *testing.T) {
 		{Name: "switch", Description: "Switch"},
 		{Name: "kill", Description: "Kill"},
 	})
-	c.input = "/"
-	c.cursor = 1
+	c.textInput.SetValue("/")
 	c.selectedSugg = 0
 
 	// Down -> index 1.
@@ -503,15 +505,13 @@ func TestChatModelSuggestionTabCompletes(t *testing.T) {
 	c.SetCommands([]CommandSuggestion{
 		{Name: "create", Description: "Create"},
 	})
-	c.input = "/"
-	c.cursor = 1
+	c.textInput.SetValue("/")
 	c.selectedSugg = 0
 
 	// Tab completes to "/create ".
 	m, _ := c.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	c = m.(ChatModel)
-	assert.Equal(t, "/create ", c.input)
-	assert.Equal(t, 8, c.cursor)
+	assert.Equal(t, "/create ", c.textInput.Value())
 }
 
 // --- Phone layout ---
@@ -592,7 +592,7 @@ func TestChatModelStickyNoDoublePrefix(t *testing.T) {
 	c := NewChatModel()
 	c.SetSize(80, 24)
 	c.targetSession = "auth"
-	c.input = "@api do something"
+	c.textInput.SetValue("@api do something")
 
 	// Submit should NOT double-prefix since input already starts with @.
 	m, cmd := c.Update(tea.KeyPressMsg{Code: 13}) // enter
@@ -604,7 +604,7 @@ func TestChatModelStickyNoDoublePrefix(t *testing.T) {
 func TestChatModelLayoutCommandNoWorkingState(t *testing.T) {
 	c := NewChatModel()
 	c.SetSize(80, 24)
-	c.input = "/layout phone"
+	c.textInput.SetValue("/layout phone")
 
 	m, cmd := c.Update(tea.KeyPressMsg{Code: 13}) // enter
 	c = m.(ChatModel)

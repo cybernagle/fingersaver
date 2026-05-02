@@ -27,6 +27,9 @@ type SessionTargetMsg struct{ Name string }
 // FocusSwitchMsg toggles pane focus.
 type FocusSwitchMsg struct{}
 
+// QuitRequestMsg is sent when the user requests quit (e.g. double Ctrl+C).
+type QuitRequestMsg struct{}
+
 // AgentStatusMsg reports agent status change.
 type AgentStatusMsg struct {
 	Session string

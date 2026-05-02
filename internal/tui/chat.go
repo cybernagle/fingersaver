@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"github.com/naglezhang/fingersaver/internal/agent"
@@ -34,7 +34,6 @@ type Suggestion struct {
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 type spinnerTickMsg time.Time
-type cursorBlinkMsg time.Time
 
 var (
 	mdOnce     sync.Once
@@ -58,11 +57,10 @@ func getMDRenderer() *glamour.TermRenderer {
 
 type ChatModel struct {
 	messages      []ChatMessage
-	input         string
+	textInput     textinput.Model
 	width         int
 	height        int
 	focused       bool
-	cursor        int // rune index (not byte index)
 	history       *ChatHistory
 	working       bool
 	workingMsg    string
@@ -70,38 +68,32 @@ type ChatModel struct {
 	workStart     time.Time
 	inputHistory  []string
 	historyIdx    int
-	cursorVisible bool
 	targetSession string
 	commands      []CommandSuggestion
 	sessions      []string
 	selectedSugg  int
 	scrollOffset  int
-	ctrlCCount    int       // consecutive Ctrl+C presses
-	lastCtrlC     time.Time // time of last Ctrl+C
+	ctrlCCount    int
+	lastCtrlC     time.Time
 }
 
 func NewChatModel() ChatModel {
+	ti := textinput.New()
+	ti.Prompt = "> "
+	ti.SetVirtualCursor(false)
+	ti.Focus()
 	return ChatModel{
-		messages:      []ChatMessage{},
-		focused:       true,
-		cursorVisible: true,
+		messages:  []ChatMessage{},
+		focused:   true,
+		textInput: ti,
 	}
 }
 
 func (c ChatModel) Init() tea.Cmd {
-	return cursorBlinkCmd()
+	return nil
 }
 
-// cursorByteIdx converts a rune index to a byte index in the input string.
-func (c ChatModel) cursorByteIdx() int {
-	return runeIdxToByte(c.input, c.cursor)
-}
-
-// runeCount returns the number of runes in the input.
-func (c ChatModel) runeCount() int {
-	return utf8.RuneCountInString(c.input)
-}
-
+// runeIdxToByte converts a rune index to a byte index in a string.
 func runeIdxToByte(s string, runeIdx int) int {
 	for i := range s {
 		if runeIdx == 0 {
@@ -112,19 +104,31 @@ func runeIdxToByte(s string, runeIdx int) int {
 	return len(s)
 }
 
-func cursorBlinkCmd() tea.Cmd {
-	return tea.Tick(530*time.Millisecond, func(t time.Time) tea.Msg { return cursorBlinkMsg(t) })
-}
-
 // currentSuggestions returns filtered suggestions based on the current input.
 // Returns nil when no suggestions should be shown.
 func (c ChatModel) currentSuggestions() []Suggestion {
+	input := c.textInput.Value()
+
 	if c.targetSession != "" {
+		// In sticky session mode, only show / command suggestions.
+		if strings.HasPrefix(input, "/") {
+			prefix := input[1:]
+			var result []Suggestion
+			for _, cmd := range c.commands {
+				if strings.HasPrefix(cmd.Name, prefix) {
+					result = append(result, Suggestion{
+						Text:        "/" + cmd.Name + " ",
+						Description: cmd.Description,
+					})
+				}
+			}
+			return result
+		}
 		return nil
 	}
 
-	if strings.HasPrefix(c.input, "/") {
-		prefix := c.input[1:]
+	if strings.HasPrefix(input, "/") {
+		prefix := input[1:]
 		var result []Suggestion
 		for _, cmd := range c.commands {
 			if strings.HasPrefix(cmd.Name, prefix) {
@@ -137,8 +141,8 @@ func (c ChatModel) currentSuggestions() []Suggestion {
 		return result
 	}
 
-	if strings.HasPrefix(c.input, "@") {
-		prefix := c.input[1:]
+	if strings.HasPrefix(input, "@") {
+		prefix := input[1:]
 		var result []Suggestion
 		for _, s := range c.sessions {
 			if strings.HasPrefix(s, prefix) {
@@ -159,14 +163,6 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		c.width = msg.Width
 		c.height = msg.Height
 
-	case cursorBlinkMsg:
-		if c.focused && !c.working {
-			c.cursorVisible = !c.cursorVisible
-			return c, cursorBlinkCmd()
-		}
-		c.cursorVisible = true
-		return c, cursorBlinkCmd()
-
 	case spinnerTickMsg:
 		if c.working {
 			c.spinnerFrame = (c.spinnerFrame + 1) % len(spinnerFrames)
@@ -178,7 +174,6 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !c.focused {
 			return c, nil
 		}
-		c.cursorVisible = true
 
 		// Suggestion navigation when suggestions are visible.
 		suggs := c.currentSuggestions()
@@ -204,15 +199,13 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					name := strings.TrimSpace(strings.TrimPrefix(s.Text, "@"))
 					if name != "" {
 						c.targetSession = name
-						c.input = ""
-						c.cursor = 0
+						c.textInput.Reset()
 						c.selectedSugg = 0
 						log.Printf("[chat] Tab @%s -> SessionTargetMsg", name)
 						return c, func() tea.Msg { return SessionTargetMsg{Name: name} }
 					}
 				}
-				c.input = s.Text
-				c.cursor = utf8.RuneCountInString(c.input)
+				c.textInput.SetValue(s.Text)
 				c.selectedSugg = 0
 				return c, nil
 			case "esc":
@@ -223,29 +216,33 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "enter":
-			if c.working || strings.TrimSpace(c.input) == "" {
+			input := c.textInput.Value()
+			if c.working || strings.TrimSpace(input) == "" {
 				return c, nil
 			}
-			text := c.input
+			trimmed := strings.TrimSpace(input)
+			// Local-only commands: skip sticky prefix and working state.
+			if strings.HasPrefix(trimmed, "/layout ") || trimmed == "/resize" {
+				c.inputHistory = append(c.inputHistory, input)
+				c.historyIdx = len(c.inputHistory)
+				c.textInput.Reset()
+				return c, func() tea.Msg { return SubmitMsg{Text: trimmed} }
+			}
+			text := input
 			// Prepend sticky session target only if input does not already start with @.
-			if c.targetSession != "" && !strings.HasPrefix(strings.TrimSpace(c.input), "@") {
+			if c.targetSession != "" && !strings.HasPrefix(trimmed, "@") && !strings.HasPrefix(trimmed, "/") {
 				text = "@" + c.targetSession + " " + text
 			}
 			// Extract and set sticky session from @mention in input.
-			if c.targetSession == "" && strings.HasPrefix(strings.TrimSpace(c.input), "@") {
+			if strings.HasPrefix(trimmed, "@") {
 				sessionName, _ := agent.ExtractMention(text)
 				if sessionName != "" {
 					c.targetSession = sessionName
 				}
 			}
-			c.inputHistory = append(c.inputHistory, c.input)
+			c.inputHistory = append(c.inputHistory, input)
 			c.historyIdx = len(c.inputHistory)
-			c.input = ""
-			c.cursor = 0
-			// Layout commands are local-only: skip working state.
-			if strings.HasPrefix(text, "/layout ") {
-				return c, func() tea.Msg { return SubmitMsg{Text: text} }
-			}
+			c.textInput.Reset()
 			c.working = true
 			c.workingMsg = ""
 			c.workStart = time.Now()
@@ -255,42 +252,19 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				func() tea.Msg { return SubmitMsg{Text: text} },
 				tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return spinnerTickMsg(t) }),
 			)
-		case "backspace":
-			if c.cursor > 0 {
-				pos := c.cursorByteIdx()
-				prevPos := runeIdxToByte(c.input, c.cursor-1)
-				c.input = c.input[:prevPos] + c.input[pos:]
-				c.cursor--
-			}
-		case "delete":
-			if c.cursor < c.runeCount() {
-				pos := c.cursorByteIdx()
-				nextPos := runeIdxToByte(c.input, c.cursor+1)
-				c.input = c.input[:pos] + c.input[nextPos:]
-			}
-		case "left":
-			if c.cursor > 0 {
-				c.cursor--
-			}
-		case "right":
-			if c.cursor < c.runeCount() {
-				c.cursor++
-			}
 		case "up":
 			if c.historyIdx > 0 {
 				c.historyIdx--
-				c.input = c.inputHistory[c.historyIdx]
-				c.cursor = c.runeCount()
+				c.textInput.SetValue(c.inputHistory[c.historyIdx])
 			}
 		case "down":
 			if c.historyIdx < len(c.inputHistory)-1 {
 				c.historyIdx++
-				c.input = c.inputHistory[c.historyIdx]
+				c.textInput.SetValue(c.inputHistory[c.historyIdx])
 			} else if c.historyIdx < len(c.inputHistory) {
 				c.historyIdx = len(c.inputHistory)
-				c.input = ""
+				c.textInput.Reset()
 			}
-			c.cursor = c.runeCount()
 		case "ctrl+c":
 			if time.Since(c.lastCtrlC) > 2*time.Second {
 				c.ctrlCCount = 0
@@ -298,7 +272,7 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			c.lastCtrlC = time.Now()
 			c.ctrlCCount++
 			if c.ctrlCCount >= 2 {
-				return c, tea.Quit
+				return c, func() tea.Msg { return QuitRequestMsg{} }
 			}
 			if c.targetSession != "" {
 				c.targetSession = ""
@@ -308,27 +282,16 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			if c.targetSession != "" {
 				c.targetSession = ""
-				return c, nil
 			}
+			return c, nil
 		case "ctrl+d":
 			return c, tea.Quit
 		default:
-			text := msg.Text
-			if text == "" {
-				s := msg.String()
-				if s == "space" {
-					text = " "
-				} else if utf8.RuneCountInString(s) == 1 {
-					text = s
-				}
-			}
-			if text != "" {
-				c.scrollOffset = 0
-				pos := c.cursorByteIdx()
-				c.input = c.input[:pos] + text + c.input[pos:]
-				c.cursor += utf8.RuneCountInString(text)
-				c.selectedSugg = 0
-			}
+			c.scrollOffset = 0
+			c.selectedSugg = 0
+			var cmd tea.Cmd
+			c.textInput, cmd = c.textInput.Update(msg)
+			return c, cmd
 		}
 
 	case OrchestratorEventMsg:
@@ -362,6 +325,11 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if c.scrollOffset > 0 {
 				c.scrollOffset--
 			}
+		}
+		// Clamp scrollOffset to prevent unbounded growth.
+		maxLines := len(c.messages) * 2
+		if c.scrollOffset > maxLines {
+			c.scrollOffset = maxLines
 		}
 	}
 
@@ -474,17 +442,19 @@ func (c ChatModel) View() tea.View {
 	}
 
 	// Input line.
+	input := c.textInput.Value()
+	cursor := c.textInput.Position()
+
 	prefix := "> "
 	if c.targetSession != "" {
 		prefix = statusStyle.Render("@" + c.targetSession + " > ")
 	}
-	// Build cursor character.
 	cursorCh := " "
-	if c.focused && c.cursorVisible {
+	if c.focused {
 		cursorCh = "█"
 	}
 
-	if c.input == "" && c.targetSession == "" && !c.working {
+	if input == "" && c.targetSession == "" && !c.working {
 		hint := ""
 		if len(c.sessions) == 0 {
 			hint = statusStyle.Render(" Type /create <name> to start a session...")
@@ -493,13 +463,8 @@ func (c ChatModel) View() tea.View {
 		}
 		contentLines = append(contentLines, chatInputStyle.Render(prefix+cursorCh+hint))
 	} else {
-		cursorLine := prefix + c.input
-		if c.focused && !c.working {
-			pos := c.cursorByteIdx()
-			before := c.input[:pos]
-			after := c.input[pos:]
-			cursorLine = prefix + before + cursorCh + after
-		}
+		pos := runeIdxToByte(input, cursor)
+		cursorLine := prefix + input[:pos] + cursorCh + input[pos:]
 		contentLines = append(contentLines, chatInputStyle.Render(cursorLine))
 	}
 
@@ -522,7 +487,9 @@ func renderMarkdown(text string) string {
 func (c *ChatModel) SetFocused(f bool) {
 	c.focused = f
 	if f {
-		c.cursorVisible = true
+		c.textInput.Focus()
+	} else {
+		c.textInput.Blur()
 	}
 }
 

@@ -287,10 +287,13 @@ CONFIGURATION
 
 KEY BINDINGS
   Ctrl+O        Switch between Chat and Viewer panes
+  Ctrl+D        Quit immediately
+  Ctrl+R        Force layout recalculation
   [ / ]         Switch between tmux sessions (in Viewer)
   Up/Down       Navigate input history (in Chat)
   Enter         Send message
-  Ctrl+C        Exit
+  Ctrl+C        Clear sticky target (press twice to quit)
+  Ctrl+A / Ctrl+E  Jump to start/end of input line
 
 CHAT COMMANDS
   @session text   Send text to a tmux session

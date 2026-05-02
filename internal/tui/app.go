@@ -76,7 +76,7 @@ func NewAppModel(orch *agent.Orchestrator, tc tmuxClient) AppModel {
 }
 
 func (a AppModel) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), cursorBlinkCmd())
+	return tickCmd()
 }
 
 func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -115,6 +115,10 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cancel()
 			return a, tea.Quit
 		}
+
+	case QuitRequestMsg:
+		a.cancel()
+		return a, tea.Quit
 
 	case SubmitMsg:
 		// Handle layout commands locally.
@@ -196,18 +200,22 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 	}
 
-	// Route key events to focused pane.
-	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+	// Route key and mouse events to focused pane.
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.MouseWheelMsg:
 		if a.focus == FocusChat {
-			m, cmd := a.chat.Update(kmsg)
+			m, cmd := a.chat.Update(msg)
 			a.chat = m.(ChatModel)
 			cmds = append(cmds, cmd)
 		} else {
-			m, cmd := a.viewer.Update(kmsg)
+			prev := a.viewer.ActiveSession()
+			m, cmd := a.viewer.Update(msg)
 			a.viewer = m.(ViewerModel)
 			cmds = append(cmds, cmd)
+			if a.viewer.ActiveSession() != prev {
+			}
 		}
-	} else {
+	default:
 		m, cmd := a.chat.Update(msg)
 		a.chat = m.(ChatModel)
 		cmds = append(cmds, cmd)
@@ -235,13 +243,13 @@ func (a AppModel) View() tea.View {
 
 func (a AppModel) viewDefault() tea.View {
 	chatStyle := BorderStyle(a.focus == FocusChat)
-	chatW := a.width * 2 / 5
+	chatW := max(a.width*2/5, 20)
 	chatView := a.chat.View()
 	chatContent := fmt.Sprintf("%s\n%s", chatTitleStyle.Render("Chat"), chatView.Content)
 	chatPane := chatStyle.Width(chatW).Height(a.height).Render(chatContent)
 
 	viewerStyle := BorderStyle(a.focus == FocusViewer)
-	viewerW := a.width - chatW - 2
+	viewerW := max(a.width-chatW-2, 20)
 	viewerView := a.viewer.View()
 	viewerContent := fmt.Sprintf("%s\n%s",
 		viewerTitleStyle.Render(fmt.Sprintf("Sessions %s", a.viewer.ActiveSession())),
@@ -278,6 +286,17 @@ func (a AppModel) viewPhone() tea.View {
 	chatContent := fmt.Sprintf("%s\n%s", chatTitleStyle.Render("Chat"), chatView.Content)
 	chatPane := chatStyle.Width(a.width).Height(chatH).Render(chatContent)
 	chatPane = trimToLines(chatPane, chatH)
+
+	// Normalize widths so borders align perfectly when stacked.
+	targetW := max(lipgloss.Width(viewerPane), lipgloss.Width(chatPane))
+	if lipgloss.Width(viewerPane) < targetW {
+		pad := strings.Repeat(" ", targetW-lipgloss.Width(viewerPane))
+		viewerPane += pad
+	}
+	if lipgloss.Width(chatPane) < targetW {
+		pad := strings.Repeat(" ", targetW-lipgloss.Width(chatPane))
+		chatPane += pad
+	}
 
 	joined := lipgloss.JoinVertical(lipgloss.Left, viewerPane, chatPane)
 
@@ -373,7 +392,6 @@ func (a AppModel) pollTmux() tea.Cmd {
 			cmd := tmux.CapturePaneCmd(active)
 			last := a.lastOutput[active]
 			if out, err := a.tmuxClient.Exec(cmd); err == nil && out != "" && strings.TrimSpace(out) != strings.TrimSpace(last) {
-				log.Printf("[app] pollTmux: output changed for %s", active)
 				return combinedTmuxMsg{
 					sessions: names,
 					output:   out,
