@@ -358,13 +358,15 @@ func (a *AppModel) processOrchestratorInput(text string) {
 }
 
 func (a *AppModel) forwardEvent(e agent.OrchestratorEvent) {
-	if a.sendFn != nil {
-		a.sendFn(OrchestratorEventMsg{
-			Type:     e.Type.String(),
-			Content:  e.Content,
-			ToolName: e.ToolName,
-		})
+	if a.sendFn == nil {
+		log.Printf("[tui] WARNING: sendFn is nil, dropping event type=%s", e.Type)
+		return
 	}
+	a.sendFn(OrchestratorEventMsg{
+		Type:     e.Type.String(),
+		Content:  e.Content,
+		ToolName: e.ToolName,
+	})
 }
 
 func (a AppModel) pollTmux() tea.Cmd {
