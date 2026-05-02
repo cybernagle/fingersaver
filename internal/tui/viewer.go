@@ -108,8 +108,7 @@ func (v ViewerModel) View() tea.View {
 	}
 	visible := lines[start:]
 
-	// Wrap each line to content width so wide tmux output
-	// emoji/special glyphs (⏺, ⏵ etc.) don't misalign the border.
+	// Wrap each line to content width to prevent horizontal overflow. (⏺, ⏵ etc.) don't misalign the border.
 	contentW := v.width - 2
 	if contentW < 1 {
 		contentW = 1
@@ -235,13 +234,9 @@ func (v *ViewerModel) SetActiveSession(s string) { v.active = s }
 
 func (v *ViewerModel) AppendOutput(session, content string) {
 	// capture-pane returns the full screen each time; replace, don't append.
-	if v.sessions[session] != content {
-		v.sessions[session] = content
-		if session == v.active {
-			v.scrollOffset = 0
-		}
-	} else {
-		v.sessions[session] = content
+	v.sessions[session] = content
+	if session == v.active && v.scrollOffset > 0 {
+		v.scrollOffset = 0
 	}
 	if v.active == "" {
 		v.active = session

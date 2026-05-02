@@ -208,12 +208,9 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat = m.(ChatModel)
 			cmds = append(cmds, cmd)
 		} else {
-			prev := a.viewer.ActiveSession()
 			m, cmd := a.viewer.Update(msg)
 			a.viewer = m.(ViewerModel)
 			cmds = append(cmds, cmd)
-			if a.viewer.ActiveSession() != prev {
-			}
 		}
 	default:
 		m, cmd := a.chat.Update(msg)

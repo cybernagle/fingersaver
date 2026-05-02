@@ -31,6 +31,8 @@ type Suggestion struct {
 }
 
 // spinnerFrames are the animation frames for the working indicator.
+const maxInputHistory = 1000
+
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 type spinnerTickMsg time.Time
@@ -104,6 +106,20 @@ func runeIdxToByte(s string, runeIdx int) int {
 	return len(s)
 }
 
+// filterCommandSuggestions returns slash command suggestions matching prefix.
+func filterCommandSuggestions(commands []CommandSuggestion, prefix string) []Suggestion {
+	var result []Suggestion
+	for _, cmd := range commands {
+		if strings.HasPrefix(cmd.Name, prefix) {
+			result = append(result, Suggestion{
+				Text:        "/" + cmd.Name + " ",
+				Description: cmd.Description,
+			})
+		}
+	}
+	return result
+}
+
 // currentSuggestions returns filtered suggestions based on the current input.
 // Returns nil when no suggestions should be shown.
 func (c ChatModel) currentSuggestions() []Suggestion {
@@ -112,33 +128,13 @@ func (c ChatModel) currentSuggestions() []Suggestion {
 	if c.targetSession != "" {
 		// In sticky session mode, only show / command suggestions.
 		if strings.HasPrefix(input, "/") {
-			prefix := input[1:]
-			var result []Suggestion
-			for _, cmd := range c.commands {
-				if strings.HasPrefix(cmd.Name, prefix) {
-					result = append(result, Suggestion{
-						Text:        "/" + cmd.Name + " ",
-						Description: cmd.Description,
-					})
-				}
-			}
-			return result
+			return filterCommandSuggestions(c.commands, input[1:])
 		}
 		return nil
 	}
 
 	if strings.HasPrefix(input, "/") {
-		prefix := input[1:]
-		var result []Suggestion
-		for _, cmd := range c.commands {
-			if strings.HasPrefix(cmd.Name, prefix) {
-				result = append(result, Suggestion{
-					Text:        "/" + cmd.Name + " ",
-					Description: cmd.Description,
-				})
-			}
-		}
-		return result
+		return filterCommandSuggestions(c.commands, input[1:])
 	}
 
 	if strings.HasPrefix(input, "@") {
@@ -243,6 +239,7 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			c.inputHistory = append(c.inputHistory, input)
 			c.historyIdx = len(c.inputHistory)
 			c.textInput.Reset()
+			c.trimHistory()
 			c.working = true
 			c.workingMsg = ""
 			c.workStart = time.Now()
@@ -482,6 +479,12 @@ func renderMarkdown(text string) string {
 		return text
 	}
 	return strings.TrimSpace(rendered)
+}
+
+func (c *ChatModel) trimHistory() {
+	if len(c.inputHistory) > maxInputHistory {
+		c.inputHistory = c.inputHistory[len(c.inputHistory)-maxInputHistory:]
+	}
 }
 
 func (c *ChatModel) SetFocused(f bool) {
