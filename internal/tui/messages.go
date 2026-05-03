@@ -21,13 +21,28 @@ type OrchestratorEventMsg struct {
 // SessionListMsg carries the current session list.
 type SessionListMsg struct{ Sessions []string }
 
+// SessionTargetMsg is sent when the user selects a session via @ autocomplete.
+type SessionTargetMsg struct{ Name string }
+
 // FocusSwitchMsg toggles pane focus.
 type FocusSwitchMsg struct{}
+
+// QuitRequestMsg is sent when the user requests quit (e.g. double Ctrl+C).
+type QuitRequestMsg struct{}
+
+// CancelRequestMsg is sent when the user cancels the current in-progress tool call chain.
+type CancelRequestMsg struct{}
 
 // AgentStatusMsg reports agent status change.
 type AgentStatusMsg struct {
 	Session string
 	Status  string // "ready", "working", "completed", "error"
+}
+
+// GuardianEventMsg carries a guardian assessment result.
+type GuardianEventMsg struct {
+	Session string
+	Content string
 }
 
 // tickMsg is used for periodic tmux polling.

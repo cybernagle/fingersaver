@@ -2,19 +2,29 @@ package tui
 
 import (
 	"strings"
+	"unicode/utf8"
+
+	"github.com/naglezhang/fingersaver/internal/util"
 
 	tea "charm.land/bubbletea/v2"
+	rw "github.com/mattn/go-runewidth"
 )
 
 // ViewerModel renders tmux session output in the right pane.
 type ViewerModel struct {
-	sessions map[string]string // session name -> output buffer
-	order    []string          // authoritative session list from SessionListMsg
-	active   string            // currently displayed session
-	width    int
-	height   int
-	focused  bool
+	sessions     map[string]string // session name -> output buffer
+	order        []string          // authoritative session list from SessionListMsg
+	active       string            // currently displayed session
+	width        int
+	height       int
+	focused      bool
+	compact      bool // phone layout: filter noise lines
+	scrollOffset int  // lines scrolled up from the bottom
 }
+
+// viewerReservedLines is the number of lines reserved for non-content UI
+// elements (status bar + top/bottom padding + tab bar).
+const viewerReservedLines = 3
 
 func NewViewerModel() ViewerModel {
 	return ViewerModel{
@@ -49,9 +59,39 @@ func (v ViewerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return v, nil
 		}
 		v.handleKey(msg.String())
+
+	case tea.MouseWheelMsg:
+		if !v.focused {
+			return v, nil
+		}
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			v.scrollOffset++
+		case tea.MouseWheelDown:
+			if v.scrollOffset > 0 {
+				v.scrollOffset--
+			}
+		}
 	}
 
+	v.clampScrollOffset()
 	return v, nil
+}
+
+func (v *ViewerModel) clampScrollOffset() {
+	if v.scrollOffset < 0 {
+		v.scrollOffset = 0
+	}
+	if v.height <= viewerReservedLines {
+		return
+	}
+	maxOff := len(strings.Split(v.sessions[v.active], "\n")) - (v.height - viewerReservedLines)
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if v.scrollOffset > maxOff {
+		v.scrollOffset = maxOff
+	}
 }
 
 func (v ViewerModel) View() tea.View {
@@ -65,24 +105,56 @@ func (v ViewerModel) View() tea.View {
 
 	content := v.sessions[v.active]
 	lines := strings.Split(content, "\n")
-	visibleHeight := v.height - 5
+	if v.compact {
+		lines = util.FilterNoiseLines(lines)
+	}
+
+	visibleHeight := v.height - viewerReservedLines
 	if visibleHeight < 1 {
 		visibleHeight = 1
 	}
 
-	start := len(lines) - visibleHeight
+	// Apply scroll offset: show content from further up.
+	offset := v.scrollOffset
+	maxOff := len(lines) - visibleHeight
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if offset > maxOff {
+		offset = maxOff
+	}
+
+	start := len(lines) - visibleHeight - offset
 	if start < 0 {
 		start = 0
 	}
 	visible := lines[start:]
 
-	// Render entire block once.
-	b.WriteString(viewerContentStyle.Render(strings.Join(visible, "\n")))
-
-	for i := len(visible); i < visibleHeight; i++ {
-		b.WriteString("\n")
+	contentW := v.width - 2
+	if contentW < 1 {
+		contentW = 1
+	}
+	renderedCount := 0
+	for _, line := range visible {
+		if v.compact {
+			for _, wl := range wrapLineToWidth(line, contentW) {
+				b.WriteString(viewerContentStyle.Render(wl))
+				b.WriteString("\n")
+				renderedCount++
+			}
+		} else {
+			b.WriteString(viewerContentStyle.Render(truncateLineToWidth(line, contentW)))
+			b.WriteString("\n")
+			renderedCount++
+		}
+		if renderedCount >= visibleHeight {
+			break
+		}
 	}
 
+	for i := renderedCount; i < visibleHeight; i++ {
+		b.WriteString("\n")
+	}
 	return tea.NewView(b.String())
 }
 
@@ -150,13 +222,107 @@ func (v *ViewerModel) pruneSessions(active []string) {
 
 func (v *ViewerModel) SetFocused(f bool)         { v.focused = f }
 func (v *ViewerModel) SetSize(w, h int)          { v.width = w; v.height = h }
+func (v *ViewerModel) SetCompact(c bool)         { v.compact = c }
 func (v *ViewerModel) ActiveSession() string     { return v.active }
 func (v *ViewerModel) SetActiveSession(s string) { v.active = s }
 
 func (v *ViewerModel) AppendOutput(session, content string) {
 	// capture-pane returns the full screen each time; replace, don't append.
+	changed := v.sessions[session] != content
 	v.sessions[session] = content
+	if changed && session == v.active {
+		v.scrollOffset = 0
+	}
 	if v.active == "" {
 		v.active = session
 	}
+}
+
+// truncateLineToWidth truncates a line to maxW visual columns, preserving
+// ANSI escape sequences.
+func truncateLineToWidth(s string, maxW int) string {
+	var b strings.Builder
+	w := 0
+	i := 0
+	for i < len(s) {
+		if s[i] == '\x1b' {
+			j := i + 1
+			if j < len(s) && s[j] == '[' {
+				j++
+				for j < len(s) && s[j] >= 0x20 && s[j] <= 0x3F {
+					j++
+				}
+				if j < len(s) && s[j] >= 0x40 && s[j] <= 0x7E {
+					j++
+				}
+			} else if j < len(s) {
+				j++
+			}
+			b.WriteString(s[i:j])
+			i = j
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		rw := rw.RuneWidth(r)
+		if w+rw > maxW {
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+		i += size
+	}
+	for w < maxW {
+		b.WriteByte(' ')
+		w++
+	}
+	return b.String()
+}
+
+func wrapLineToWidth(s string, maxW int) []string {
+	var lines []string
+	var b strings.Builder
+	w := 0
+	i := 0
+	for i < len(s) {
+		// Copy ANSI escape sequences verbatim.
+		if s[i] == '\x1b' {
+			j := i + 1
+			if j < len(s) && s[j] == '[' {
+				j++
+				for j < len(s) && s[j] >= 0x20 && s[j] <= 0x3F {
+					j++
+				}
+				if j < len(s) && s[j] >= 0x40 && s[j] <= 0x7E {
+					j++
+				}
+			} else if j < len(s) {
+				j++
+			}
+			b.WriteString(s[i:j])
+			i = j
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		rw := rw.RuneWidth(r)
+		if w+rw > maxW {
+			// Pad current line to exact width and start a new line.
+			for w < maxW {
+				b.WriteByte(' ')
+				w++
+			}
+			lines = append(lines, b.String())
+			b.Reset()
+			w = 0
+		}
+		b.WriteRune(r)
+		w += rw
+		i += size
+	}
+	// Pad final line.
+	for w < maxW {
+		b.WriteByte(' ')
+		w++
+	}
+	lines = append(lines, b.String())
+	return lines
 }

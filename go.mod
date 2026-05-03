@@ -3,6 +3,7 @@ module github.com/naglezhang/fingersaver
 go 1.26.1
 
 require (
+	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.6
 	charm.land/glamour/v2 v2.0.0
 	charm.land/lipgloss/v2 v2.0.3
@@ -13,6 +14,7 @@ require (
 
 require (
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
+	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect

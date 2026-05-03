@@ -9,16 +9,23 @@ import (
 	"strings"
 )
 
+const (
+	TmuxModeAuto      = "auto"
+	TmuxModeDedicated = "dedicated"
+	TmuxModeShared    = "shared"
+)
+
 type Config struct {
 	LLMProvider     string `json:"llm_provider"`
 	LLMModel        string `json:"llm_model"`
 	LLMAPIKey       string `json:"-"`
 	LLMBaseURL      string `json:"llm_base_url,omitempty"`
-	TmuxMode        string `json:"tmux_mode"` // "auto", "dedicated", "shared"
+	TmuxMode        string `json:"tmux_mode"`
 	TmuxSocketPath  string `json:"tmux_socket_path"`
 	DataDir         string `json:"data_dir"`
 	ChatHistoryPath string `json:"chat_history_path"`
 	ClaudeDir       string `json:"claude_dir"`
+	GuardianPrompt  string `json:"guardian_prompt,omitempty"`
 }
 
 func homeDir() string {
@@ -34,7 +41,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		LLMProvider:     "",
 		LLMModel:        "",
-		TmuxMode:        "auto",
+		TmuxMode:        TmuxModeAuto,
 		TmuxSocketPath:  filepath.Join(dataDir, "tmux.sock"),
 		DataDir:         dataDir,
 		ChatHistoryPath: filepath.Join(dataDir, "chat.md"),
@@ -221,7 +228,7 @@ func (c *Config) validate() error {
 		return fmt.Errorf("unsupported llm_provider: %s (must be anthropic or openai)", c.LLMProvider)
 	}
 	switch c.TmuxMode {
-	case "auto", "dedicated", "shared":
+	case TmuxModeAuto, TmuxModeDedicated, TmuxModeShared:
 	default:
 		return fmt.Errorf("unsupported tmux_mode: %s (must be auto, dedicated, or shared)", c.TmuxMode)
 	}
@@ -236,6 +243,15 @@ func (c *Config) ValidateAPIKey() error {
 		return fmt.Errorf("no API key found: set ANTHROPIC_API_KEY/OPENAI_API_KEY or configure %s", filepath.Join(c.ClaudeDir, "settings.json"))
 	}
 	return nil
+}
+
+func (c *Config) Save() error {
+	configPath := filepath.Join(c.DataDir, "config.json")
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, data, 0o644)
 }
 
 func (c *Config) Summary() string {

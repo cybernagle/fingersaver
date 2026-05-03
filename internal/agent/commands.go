@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/naglezhang/fingersaver/internal/agent/tools"
 )
 
 type SlashCommand struct {
@@ -15,10 +17,10 @@ type SlashCommand struct {
 
 type CommandRegistry struct {
 	commands map[string]*SlashCommand
-	tc       TmuxClient
+	tc       tools.TmuxClient
 }
 
-func NewCommandRegistry(tc TmuxClient) *CommandRegistry {
+func NewCommandRegistry(tc tools.TmuxClient) *CommandRegistry {
 	cr := &CommandRegistry{
 		commands: make(map[string]*SlashCommand),
 		tc:       tc,
@@ -35,7 +37,7 @@ func (cr *CommandRegistry) registerDefaults() {
 			if len(args) < 1 {
 				return "", fmt.Errorf("usage: /create <name> [working-dir]")
 			}
-			tool := NewCreateSessionTool(cr.tc)
+			tool := tools.NewCreateSessionTool(cr.tc)
 			toolArgs := map[string]any{"name": args[0]}
 			if len(args) > 1 {
 				toolArgs["working_dir"] = args[1]
@@ -50,7 +52,7 @@ func (cr *CommandRegistry) registerDefaults() {
 			if len(args) < 1 {
 				return "", fmt.Errorf("usage: /switch <name>")
 			}
-			tool := NewSwitchSessionTool(cr.tc)
+			tool := tools.NewSwitchSessionTool(cr.tc)
 			return tool.Execute(ctx, map[string]any{"name": args[0]})
 		},
 	})
@@ -61,7 +63,7 @@ func (cr *CommandRegistry) registerDefaults() {
 			if len(args) < 1 {
 				return "", fmt.Errorf("usage: /kill <name>")
 			}
-			tool := NewKillSessionTool(cr.tc)
+			tool := tools.NewKillSessionTool(cr.tc)
 			return tool.Execute(ctx, map[string]any{"name": args[0]})
 		},
 	})
@@ -69,7 +71,7 @@ func (cr *CommandRegistry) registerDefaults() {
 		Name: "list", Usage: "/list",
 		Description: "List all sessions",
 		Execute: func(ctx context.Context, args []string) (string, error) {
-			tool := NewListSessionsTool(cr.tc)
+			tool := tools.NewListSessionsTool(cr.tc)
 			return tool.Execute(ctx, nil)
 		},
 	})
