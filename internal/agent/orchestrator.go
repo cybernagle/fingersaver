@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/naglezhang/fingersaver/internal/agent/skills"
 	"github.com/naglezhang/fingersaver/internal/agent/tools"
 	"github.com/naglezhang/fingersaver/internal/llm"
 	"github.com/naglezhang/fingersaver/internal/util"
@@ -58,6 +59,7 @@ type Orchestrator struct {
 	callTimeout  time.Duration
 	cancelMu     sync.Mutex
 	cancelFn     context.CancelFunc
+	activeSkill  *skills.Skill
 }
 
 func NewOrchestrator(provider llm.Provider, tc tools.TmuxClient, hooks *HookManager, toolList []tools.Tool) *Orchestrator {
@@ -90,6 +92,23 @@ func (o *Orchestrator) SetModel(model string) {
 
 func (o *Orchestrator) SetCallTimeout(d time.Duration) {
 	o.callTimeout = d
+}
+
+func (o *Orchestrator) LoadSkills(dirs []string) error {
+	all, err := skills.LoadAll(dirs)
+	if err != nil {
+		return err
+	}
+	for name, skill := range all {
+		s := skill
+		o.commands.Register(&SlashCommand{
+			Name:        name,
+			Usage:       "/" + name,
+			Description: s.Description,
+			Skill:       s,
+		})
+	}
+	return nil
 }
 
 func (o *Orchestrator) SetCommandRegistry(cr *CommandRegistry) {
@@ -192,6 +211,30 @@ func (o *Orchestrator) ProcessInput(ctx context.Context, input string) (<-chan O
 	ch := make(chan OrchestratorEvent, 64)
 
 	if strings.HasPrefix(strings.TrimSpace(input), "/") && o.commands != nil {
+		cmdName, cmdArgs, ok := ParseSlashCommand(input)
+		if !ok {
+			go func() {
+				defer close(ch)
+				defer cancel()
+				ch <- OrchestratorEvent{Type: EventText, Content: "Invalid command"}
+				ch <- OrchestratorEvent{Type: EventDone}
+			}()
+			return ch, nil
+		}
+
+		cmd, found := o.commands.Lookup(cmdName)
+		if found && cmd.Skill != nil {
+			expanded := cmd.Skill.ExpandPrompt(cmdArgs)
+			o.activeSkill = cmd.Skill
+			go func() {
+				defer close(ch)
+				defer cancel()
+				defer func() { o.activeSkill = nil }()
+				o.handleLLM(ctx, ch, expanded)
+			}()
+			return ch, nil
+		}
+
 		go func() {
 			defer close(ch)
 			defer cancel()
@@ -347,8 +390,23 @@ func (o *Orchestrator) executeTool(ctx context.Context, tc llm.ToolCall) llm.Too
 }
 
 func (o *Orchestrator) buildOptions() llm.GenerateOptions {
-	defs := make([]llm.ToolDefinition, len(o.toolList))
-	for i, t := range o.toolList {
+	toolList := o.toolList
+	if o.activeSkill != nil && len(o.activeSkill.AllowedTools) > 0 {
+		allowed := make(map[string]bool, len(o.activeSkill.AllowedTools))
+		for _, t := range o.activeSkill.AllowedTools {
+			allowed[t] = true
+		}
+		var filtered []tools.Tool
+		for _, t := range o.toolList {
+			if allowed[t.Name] {
+				filtered = append(filtered, t)
+			}
+		}
+		toolList = filtered
+	}
+
+	defs := make([]llm.ToolDefinition, len(toolList))
+	for i, t := range toolList {
 		params := map[string]any{"type": "object", "properties": map[string]any{}}
 		required := []string{}
 		for _, p := range t.Parameters {
