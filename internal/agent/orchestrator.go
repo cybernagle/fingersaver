@@ -59,6 +59,7 @@ type Orchestrator struct {
 	callTimeout  time.Duration
 	cancelMu     sync.Mutex
 	cancelFn     context.CancelFunc
+	skillMu      sync.Mutex
 	activeSkill  *skills.Skill
 }
 
@@ -153,6 +154,18 @@ func (o *Orchestrator) snapshotMessages() []llm.Message {
 	return cp
 }
 
+func (o *Orchestrator) setActiveSkill(s *skills.Skill) {
+	o.skillMu.Lock()
+	o.activeSkill = s
+	o.skillMu.Unlock()
+}
+
+func (o *Orchestrator) getActiveSkill() *skills.Skill {
+	o.skillMu.Lock()
+	defer o.skillMu.Unlock()
+	return o.activeSkill
+}
+
 // CrossAgentRelay reads output from sourceSession, asks the LLM to summarize,
 // and sends the summary to targetSession.
 func (o *Orchestrator) CrossAgentRelay(ctx context.Context, sourceSession, targetSession, prompt string) error {
@@ -225,11 +238,11 @@ func (o *Orchestrator) ProcessInput(ctx context.Context, input string) (<-chan O
 		cmd, found := o.commands.Lookup(cmdName)
 		if found && cmd.Skill != nil {
 			expanded := cmd.Skill.ExpandPrompt(cmdArgs)
-			o.activeSkill = cmd.Skill
+			o.setActiveSkill(cmd.Skill)
 			go func() {
 				defer close(ch)
 				defer cancel()
-				defer func() { o.activeSkill = nil }()
+				defer func() { o.setActiveSkill(nil) }()
 				o.handleLLM(ctx, ch, expanded)
 			}()
 			return ch, nil
@@ -391,9 +404,9 @@ func (o *Orchestrator) executeTool(ctx context.Context, tc llm.ToolCall) llm.Too
 
 func (o *Orchestrator) buildOptions() llm.GenerateOptions {
 	toolList := o.toolList
-	if o.activeSkill != nil && len(o.activeSkill.AllowedTools) > 0 {
-		allowed := make(map[string]bool, len(o.activeSkill.AllowedTools))
-		for _, t := range o.activeSkill.AllowedTools {
+	if skill := o.getActiveSkill(); skill != nil && len(skill.AllowedTools) > 0 {
+		allowed := make(map[string]bool, len(skill.AllowedTools))
+		for _, t := range skill.AllowedTools {
 			allowed[t] = true
 		}
 		var filtered []tools.Tool
