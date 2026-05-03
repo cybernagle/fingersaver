@@ -25,6 +25,7 @@ type Config struct {
 	DataDir         string `json:"data_dir"`
 	ChatHistoryPath string `json:"chat_history_path"`
 	ClaudeDir       string `json:"claude_dir"`
+	GuardianPrompt  string `json:"guardian_prompt,omitempty"`
 }
 
 func homeDir() string {

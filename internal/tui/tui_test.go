@@ -519,7 +519,7 @@ func TestChatModelSuggestionTabCompletes(t *testing.T) {
 // --- Phone layout ---
 
 func TestAppModelPhoneLayoutView(t *testing.T) {
-	a := NewAppModel(nil, nil, nil)
+	a := NewAppModel(nil, nil)
 	a.layout = LayoutPhone
 	a.width = 60
 	a.height = 40
@@ -533,7 +533,7 @@ func TestAppModelPhoneLayoutView(t *testing.T) {
 }
 
 func TestAppModelLayoutSwitchCommand(t *testing.T) {
-	a := NewAppModel(nil, nil, nil)
+	a := NewAppModel(nil, nil)
 	a.width = 120
 	a.height = 40
 	a.recalcSizes()
@@ -553,7 +553,7 @@ func TestAppModelLayoutSwitchCommand(t *testing.T) {
 }
 
 func TestAppModelAutoDetectNarrow(t *testing.T) {
-	a := NewAppModel(nil, nil, nil)
+	a := NewAppModel(nil, nil)
 
 	// Narrow terminal triggers phone layout.
 	m, _ := a.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
@@ -563,7 +563,7 @@ func TestAppModelAutoDetectNarrow(t *testing.T) {
 }
 
 func TestAppModelAutoRevertWide(t *testing.T) {
-	a := NewAppModel(nil, nil, nil)
+	a := NewAppModel(nil, nil)
 
 	// Narrow -> phone layout.
 	m, _ := a.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
@@ -577,7 +577,7 @@ func TestAppModelAutoRevertWide(t *testing.T) {
 }
 
 func TestAppModelExplicitLayoutNotOverridden(t *testing.T) {
-	a := NewAppModel(nil, nil, nil)
+	a := NewAppModel(nil, nil)
 	a.layout = LayoutPhone
 	a.layoutExplicit = true
 	a.width = 120

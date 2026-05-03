@@ -108,13 +108,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create guardian manager and orchestrator.
+	// Create assessor and orchestrator.
 	hm := agent.NewHookManager()
-	gm := agent.NewGuardianManager(provider, tc, cfg.LLMModel)
-	orch := agent.NewOrchestrator(provider, tc, hm, tools.AllTools(tc, gm))
-	orch.SetCommandRegistry(agent.NewCommandRegistry(tc, gm))
+	assessor := agent.NewSessionAssessor(provider, cfg.LLMModel, cfg.GuardianPrompt)
+	orch := agent.NewOrchestrator(provider, tc, hm, tools.AllTools(tc, assessor))
+	orch.SetCommandRegistry(agent.NewCommandRegistry(tc))
 	orch.SetModel(cfg.LLMModel)
-	orch.SetGuardian(gm)
 	orch.SetSystemPrompt(agent.DefaultSystemPrompt())
 
 	if *chatMode {
@@ -123,7 +122,7 @@ func main() {
 	}
 
 	// Create and run TUI.
-	app := tui.NewAppModel(orch, tc, gm)
+	app := tui.NewAppModel(orch, tc)
 	if *phoneLayout {
 		app.SetLayout(tui.LayoutPhone)
 	}

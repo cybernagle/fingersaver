@@ -10,10 +10,10 @@ import (
 	"github.com/naglezhang/fingersaver/internal/util"
 )
 
-func NewRelayMessageTool(tc TmuxClient, gm Guardian) Tool {
+func NewRelayMessageTool(tc TmuxClient) Tool {
 	return Tool{
 		Name:        "relay_message",
-		Description: "Relay a structured message between sessions. Auto-starts guardian on target to handle confirmation prompts.",
+		Description: "Relay a structured message between sessions. Follow with wait_until_idle to handle confirmation prompts on the target.",
 		Parameters: []Param{
 			{Name: "from_session", Type: "string", Description: "Source session name", Required: true},
 			{Name: "to_session", Type: "string", Description: "Target session name", Required: true},
@@ -30,13 +30,11 @@ func NewRelayMessageTool(tc TmuxClient, gm Guardian) Tool {
 				return "", fmt.Errorf("from_session, to_session, message_type, and content are required")
 			}
 
-			// Read source session output.
 			srcOutput, err := readStructured(tc, fromSession)
 			if err != nil {
 				return "", err
 			}
 
-			// Dismiss pending confirmation in target if present.
 			targetRaw, _ := tc.Exec(tmux.CapturePaneCmd(toSession))
 			if targetRaw != "" {
 				targetOutput := parseStructuredOutput(targetRaw)
@@ -46,15 +44,9 @@ func NewRelayMessageTool(tc TmuxClient, gm Guardian) Tool {
 				}
 			}
 
-			// Format and send relay message.
 			msg := formatRelayMessage(fromSession, messageType, content, srcOutput)
 			if err := sendText(tc, toSession, msg); err != nil {
 				return "", err
-			}
-
-			// Auto-start guardian on target session.
-			if gm != nil {
-				gm.AutoWatch(ctx, toSession)
 			}
 
 			return fmt.Sprintf("Relayed %s from %q to %q", messageType, fromSession, toSession), nil

@@ -45,7 +45,6 @@ type AppModel struct {
 	sendFn       func(tea.Msg)
 	lastOutput   map[string]string
 	lastSessions []string
-	guardian     *agent.GuardianManager
 }
 
 type tmuxClient interface {
@@ -53,7 +52,7 @@ type tmuxClient interface {
 	State() *tmux.StateMirror
 }
 
-func NewAppModel(orch *agent.Orchestrator, tc tmuxClient, guardian *agent.GuardianManager) AppModel {
+func NewAppModel(orch *agent.Orchestrator, tc tmuxClient) AppModel {
 	ctx, cancel := context.WithCancel(context.Background())
 	chat := NewChatModel()
 	if orch != nil {
@@ -73,7 +72,6 @@ func NewAppModel(orch *agent.Orchestrator, tc tmuxClient, guardian *agent.Guardi
 		ctx:          ctx,
 		cancel:       cancel,
 		lastOutput:   make(map[string]string),
-		guardian:     guardian,
 	}
 }
 
@@ -452,11 +450,6 @@ func sessionsChanged(a, b []string) bool {
 
 func (a *AppModel) SetSendFn(fn func(tea.Msg)) {
 	a.sendFn = fn
-	if a.guardian != nil {
-		a.guardian.SetSendEvent(func(session, content string) {
-			fn(GuardianEventMsg{Session: session, Content: content})
-		})
-	}
 }
 
 func (a *AppModel) SetLayout(l Layout) {

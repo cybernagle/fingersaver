@@ -28,12 +28,15 @@ type TmuxClient interface {
 	State() *tmux.StateMirror
 }
 
-// Guardian is the interface for session guardian functionality.
-// Implemented by agent.GuardianManager; defined here to avoid circular imports.
-type Guardian interface {
-	Watch(ctx context.Context, name string) error
-	AutoWatch(ctx context.Context, name string)
-	Stop(name string) error
-	StopAll()
-	ActiveGuardians() []string
+// Assessor evaluates session output for pending confirmation prompts
+// and decides whether to approve or reject. Defined here to avoid
+// circular imports (implemented in agent package).
+type Assessor interface {
+	Assess(ctx context.Context, sessionName, output string) (*Assessment, error)
+}
+
+// Assessment is the result of evaluating a session's pending confirmation.
+type Assessment struct {
+	Decision string `json:"decision"` // "approve", "reject", "idle", "unknown"
+	Reason   string `json:"reason"`
 }

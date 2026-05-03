@@ -1,27 +1,21 @@
 package tools
 
-func AllTools(tc TmuxClient, gm Guardian) []Tool {
-	ts := []Tool{
+func AllTools(tc TmuxClient, assessor Assessor) []Tool {
+	return []Tool{
 		NewListSessionsTool(tc),
 		NewCreateSessionTool(tc),
 		NewSwitchSessionTool(tc),
 		NewKillSessionTool(tc),
-		NewSendToSessionTool(tc, gm),
+		NewSendToSessionTool(tc),
 		NewReadSessionOutputTool(tc),
 		NewReadStructuredOutputTool(tc),
-		NewRelayMessageTool(tc, gm),
+		NewRelayMessageTool(tc),
 		NewSaveContextTool(tc),
 		NewRestoreContextTool(tc),
 		NewWaitUntilIdleTool(tc),
+		NewAssessConfirmationTool(tc, assessor),
+		NewRespondConfirmationTool(tc),
 		NewSetStateTool(),
 		NewGetStateTool(),
 	}
-	if gm != nil {
-		ts = append(ts,
-			NewWatchSessionTool(gm),
-			NewUnwatchSessionTool(gm),
-			NewListWatchersTool(gm),
-		)
-	}
-	return ts
 }

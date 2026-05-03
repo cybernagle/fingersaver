@@ -135,7 +135,7 @@ func TestKillSessionTool(t *testing.T) {
 func TestSendToSessionTool(t *testing.T) {
 	mc := newMockTmuxClient()
 
-	tool := NewSendToSessionTool(mc, nil)
+	tool := NewSendToSessionTool(mc)
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"name":    "target",
 		"message": "echo hello",
@@ -146,7 +146,7 @@ func TestSendToSessionTool(t *testing.T) {
 
 func TestSendToSessionMissingArgs(t *testing.T) {
 	mc := newMockTmuxClient()
-	tool := NewSendToSessionTool(mc, nil)
+	tool := NewSendToSessionTool(mc)
 	_, err := tool.Execute(context.Background(), map[string]any{"name": "x"})
 	assert.Error(t, err)
 }
@@ -211,7 +211,7 @@ func TestReadSessionOutputEmpty(t *testing.T) {
 func TestAllToolsCount(t *testing.T) {
 	mc := newMockTmuxClient()
 	ts := AllTools(mc, nil)
-	assert.Len(t, ts, 13)
+	assert.Len(t, ts, 15)
 }
 
 func TestReadStructuredOutputTool(t *testing.T) {

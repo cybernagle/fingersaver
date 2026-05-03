@@ -7,10 +7,10 @@ import (
 	"github.com/naglezhang/fingersaver/internal/util"
 )
 
-func NewSendToSessionTool(tc TmuxClient, gm Guardian) Tool {
+func NewSendToSessionTool(tc TmuxClient) Tool {
 	return Tool{
 		Name:        "send_to_session",
-		Description: "Send a command or message to a tmux session. Auto-starts a guardian to handle confirmation prompts.",
+		Description: "Send a command or message to a tmux session. Follow with wait_until_idle to handle any confirmation prompts.",
 		Parameters: []Param{
 			{Name: "name", Type: "string", Description: "Session name", Required: true},
 			{Name: "message", Type: "string", Description: "Text to send to the session", Required: true},
@@ -24,11 +24,6 @@ func NewSendToSessionTool(tc TmuxClient, gm Guardian) Tool {
 
 			if err := sendText(tc, name, message); err != nil {
 				return "", err
-			}
-
-			// Auto-start guardian to handle any confirmation prompts.
-			if gm != nil {
-				gm.AutoWatch(ctx, name)
 			}
 
 			return fmt.Sprintf("Sent to %q: %s", name, util.Truncate(message, 50)), nil

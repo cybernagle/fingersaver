@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -10,7 +11,7 @@ import (
 func NewWaitUntilIdleTool(tc TmuxClient) Tool {
 	return Tool{
 		Name:        "wait_until_idle",
-		Description: "Poll a session until the agent returns to idle state (❯ prompt with no pending confirmation), or timeout",
+		Description: "Poll a session until the agent returns to idle state, or timeout. Returns 'blocked' if a confirmation prompt is pending and needs a response (use assess_confirmation + respond_confirmation to handle).",
 		Parameters: []Param{
 			{Name: "session_name", Type: "string", Description: "Session name to poll", Required: true},
 			{Name: "timeout_seconds", Type: "number", Description: "Max wait time in seconds (default 300)"},
@@ -27,7 +28,19 @@ func NewWaitUntilIdleTool(tc TmuxClient) Tool {
 			}
 
 			result, waited := pollUntilIdle(ctx, tc, sessionName, timeoutSec)
-			return fmt.Sprintf(`{"status":"%s","waited_seconds":%.1f}`, result["status"], waited.Seconds()), nil
+
+			data := map[string]any{
+				"status":         result["status"],
+				"waited_seconds": fmt.Sprintf("%.1f", waited.Seconds()),
+			}
+			if v, ok := result["pending_prompt"]; ok {
+				data["pending_prompt"] = v
+			}
+			if v, ok := result["pending_type"]; ok {
+				data["pending_type"] = v
+			}
+			jsonBytes, _ := json.Marshal(data)
+			return string(jsonBytes), nil
 		},
 	}
 }
@@ -44,6 +57,14 @@ func pollUntilIdle(ctx context.Context, tc TmuxClient, sessionName string, timeo
 		out, err := readStructured(tc, sessionName)
 		if err != nil {
 			return map[string]string{"status": "error"}, time.Since(start)
+		}
+
+		if out.PendingConfirmation != nil {
+			return map[string]string{
+				"status":         "blocked",
+				"pending_prompt": out.PendingConfirmation.Prompt,
+				"pending_type":   out.PendingConfirmation.Type,
+			}, time.Since(start)
 		}
 
 		if isIdle(out) {
@@ -70,8 +91,6 @@ func pollUntilIdle(ctx context.Context, tc TmuxClient, sessionName string, timeo
 	}
 }
 
-// isIdle returns true if the agent is at an idle prompt — no pending
-// confirmation, no active command, and a bare ❯ prompt is present.
 func isIdle(out *StructuredOutput) bool {
 	if out.PendingConfirmation != nil {
 		return false
@@ -79,14 +98,12 @@ func isIdle(out *StructuredOutput) bool {
 	if out.Status == "completed" {
 		return true
 	}
-	// Check for bare ❯ prompt (not a selection like ❯ 1. option).
 	if hasBarePrompt(out.RawOutput) && out.Status != "executing_command" && out.Status != "waiting_input" {
 		return true
 	}
 	return false
 }
 
-// hasBarePrompt checks if the raw output ends with a bare ❯ prompt line.
 func hasBarePrompt(raw string) bool {
 	lines := strings.Split(raw, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {

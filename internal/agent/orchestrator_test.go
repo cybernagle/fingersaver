@@ -74,7 +74,7 @@ func TestOrchestratorSlashCommand(t *testing.T) {
 	mp := &mockProvider{}
 	hm := NewHookManager()
 	orch := NewOrchestrator(mp, mc, hm, tools.AllTools(mc, nil))
-	orch.SetCommandRegistry(NewCommandRegistry(mc, nil))
+	orch.SetCommandRegistry(NewCommandRegistry(mc))
 
 	events, err := orch.ProcessInput(context.Background(), "/help")
 	require.NoError(t, err)

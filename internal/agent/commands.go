@@ -18,14 +18,12 @@ type SlashCommand struct {
 type CommandRegistry struct {
 	commands map[string]*SlashCommand
 	tc       tools.TmuxClient
-	guardian tools.Guardian
 }
 
-func NewCommandRegistry(tc tools.TmuxClient, guardian tools.Guardian) *CommandRegistry {
+func NewCommandRegistry(tc tools.TmuxClient) *CommandRegistry {
 	cr := &CommandRegistry{
 		commands: make(map[string]*SlashCommand),
 		tc:       tc,
-		guardian: guardian,
 	}
 	cr.registerDefaults()
 	return cr
@@ -87,39 +85,6 @@ func (cr *CommandRegistry) registerDefaults() {
 				sb.WriteString(fmt.Sprintf("  %-30s %s\n", cmd.Usage, cmd.Description))
 			}
 			return sb.String(), nil
-		},
-	})
-
-	cr.Register(&SlashCommand{
-		Name:        "watch",
-		Usage:       "/watch <session> | /watch stop [session] | /watch list",
-		Description: "Start or stop session guardian (auto-approve/reject agent confirmations)",
-		Execute: func(ctx context.Context, args []string) (string, error) {
-			if cr.guardian == nil {
-				return "", fmt.Errorf("guardian not available")
-			}
-			if len(args) == 0 {
-				return "", fmt.Errorf("usage: /watch <session> | /watch stop [session] | /watch list")
-			}
-			switch args[0] {
-			case "stop":
-				if len(args) > 1 {
-					return "", cr.guardian.Stop(args[1])
-				}
-				cr.guardian.StopAll()
-				return "All guardians stopped.", nil
-			case "list":
-				active := cr.guardian.ActiveGuardians()
-				if len(active) == 0 {
-					return "No active guardians.", nil
-				}
-				return "Watching: " + strings.Join(active, ", "), nil
-			default:
-				if err := cr.guardian.Watch(ctx, args[0]); err != nil {
-					return "", err
-				}
-				return fmt.Sprintf("Guardian started for %q", args[0]), nil
-			}
 		},
 	})
 }

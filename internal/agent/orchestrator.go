@@ -47,7 +47,6 @@ type OrchestratorEvent struct {
 type Orchestrator struct {
 	provider     llm.Provider
 	tc           tools.TmuxClient
-	guardian     tools.Guardian
 	toolList     []tools.Tool
 	toolMap      map[string]tools.Tool
 	commands     *CommandRegistry
@@ -87,10 +86,6 @@ func (o *Orchestrator) SetSystemPrompt(prompt string) {
 
 func (o *Orchestrator) SetModel(model string) {
 	o.model = model
-}
-
-func (o *Orchestrator) SetGuardian(gm tools.Guardian) {
-	o.guardian = gm
 }
 
 func (o *Orchestrator) SetCallTimeout(d time.Duration) {
@@ -232,7 +227,7 @@ func (o *Orchestrator) ProcessInput(ctx context.Context, input string) (<-chan O
 }
 
 func (o *Orchestrator) handleMention(ctx context.Context, ch chan<- OrchestratorEvent, sessionName, text string) {
-	tool := tools.NewSendToSessionTool(o.tc, o.guardian)
+	tool := tools.NewSendToSessionTool(o.tc)
 	result, err := tool.Execute(ctx, map[string]any{
 		"name":    sessionName,
 		"message": text,
@@ -414,13 +409,15 @@ Available tools:
 - relay_message: Relay structured message between sessions with source summary (args: from_session, to_session, message_type, content)
 - save_context: Save session snapshot to disk (args: name, label)
 - restore_context: Restore saved context to a session (args: name, source_session, label)
-- wait_until_idle: Poll a session until agent is idle (args: session_name, timeout_seconds)
+- wait_until_idle: Poll a session until agent is idle. Returns "blocked" if a confirmation prompt is pending (args: session_name, timeout_seconds)
+- assess_confirmation: Assess a pending confirmation prompt — decide approve or reject (args: session_name)
+- respond_confirmation: Send Yes/No to a session's pending confirmation (args: session_name, approve)
 - set_state: Persist key-value state (args: key, value)
 - get_state: Read key-value state (args: key)
-- watch_session: Start a guardian that monitors a session for confirmation prompts and auto-responds (args: name)
-- unwatch_session: Stop watching a session (args: name)
-- list_watchers: List all sessions being watched
 
 When the user refers to a session by name (e.g., "check the auth service"), use switch_session and read_session_output to understand the state.
-When the user asks you to "watch" or "monitor" a session, use watch_session. Multiple sessions can be watched simultaneously.`
+
+Confirmation handling workflow:
+When wait_until_idle returns "blocked", use assess_confirmation to evaluate the prompt, then respond_confirmation to approve or reject. Then call wait_until_idle again to continue waiting.
+Example: send_to_session → wait_until_idle → (blocked) → assess_confirmation → respond_confirmation → wait_until_idle → (idle)`
 }
