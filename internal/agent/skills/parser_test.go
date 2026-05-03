@@ -114,3 +114,13 @@ func TestExpandPromptNoArgs(t *testing.T) {
 	result := skill.ExpandPrompt(nil)
 	assert.Equal(t, "List all sessions. Args: ", result)
 }
+
+func TestExpandPromptFewerArgsThanTemplate(t *testing.T) {
+	skill := &Skill{
+		Name:   "deploy",
+		Prompt: "Deploy {{.Arg0}} to {{.Arg1}} with {{.Arg2}}",
+	}
+
+	result := skill.ExpandPrompt([]string{"api"})
+	assert.Equal(t, "Deploy api to  with ", result)
+}
