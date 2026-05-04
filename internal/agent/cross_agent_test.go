@@ -23,7 +23,7 @@ func TestCrossAgentRelay(t *testing.T) {
 			},
 		},
 	}
-	orch := NewOrchestrator(mp, mc, NewHookManager(), tools.AllTools(mc, nil, "/tmp"))
+	orch := NewOrchestrator(mp, mc, NewHookManager(), tools.AllTools(mc, nil, "/tmp", nil))
 
 	err := orch.CrossAgentRelay(context.Background(), "auth", "frontend",
 		"Summarize the output from this agent in one line.")

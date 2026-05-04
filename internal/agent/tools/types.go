@@ -40,3 +40,13 @@ type Assessment struct {
 	Decision string `json:"decision"` // "approve", "reject", "idle", "unknown"
 	Reason   string `json:"reason"`
 }
+
+// Notifier receives agent stop notifications and provides versioned waits.
+// Implemented by AgentNotifier in the agent package.
+type Notifier interface {
+	// Snapshot returns the latest notification sequence for a session.
+	Snapshot(session string) uint64
+	// WaitAfter returns a channel that closes after the session receives a
+	// notification newer than after. The cancel function removes the waiter.
+	WaitAfter(session string, after uint64) (<-chan struct{}, func())
+}

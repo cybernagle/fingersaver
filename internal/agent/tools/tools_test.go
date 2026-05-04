@@ -211,7 +211,7 @@ func TestReadSessionOutputEmpty(t *testing.T) {
 
 func TestAllToolsCount(t *testing.T) {
 	mc := newMockTmuxClient()
-	ts := AllTools(mc, nil, "/tmp")
+	ts := AllTools(mc, nil, "/tmp", nil)
 	assert.Len(t, ts, 18)
 }
 

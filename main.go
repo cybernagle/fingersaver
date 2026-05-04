@@ -3,15 +3,19 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/naglezhang/fingersaver/internal/agent"
@@ -33,6 +37,12 @@ var (
 const version = "0.4.0"
 
 func main() {
+	// Handle "fingersaver notify <session> <status>" subcommand.
+	if len(os.Args) >= 2 && os.Args[1] == "notify" {
+		runNotify()
+		return
+	}
+
 	flag.BoolVar(showHelp, "h", false, "Show help")
 	flag.Parse()
 
@@ -112,7 +122,18 @@ func main() {
 	hm := agent.NewHookManager()
 	assessor := agent.NewSessionAssessor(provider, cfg.LLMModel, cfg.GuardianPrompt)
 	cwd, _ := os.Getwd()
-	orch := agent.NewOrchestrator(provider, tc, hm, tools.AllTools(tc, assessor, cwd))
+
+	// Create hook notifier for agent stop notifications.
+	notifier := agent.NewAgentNotifier()
+	if err := notifier.Start(ctx); err != nil {
+		log.Printf("[main] warning: hook notifier failed to start: %v", err)
+		notifier = nil
+	}
+	if notifier != nil {
+		defer notifier.Stop()
+	}
+
+	orch := agent.NewOrchestrator(provider, tc, hm, tools.AllTools(tc, assessor, cwd, notifier))
 	orch.SetCommandRegistry(agent.NewCommandRegistry(tc))
 	homeDir, _ := os.UserHomeDir()
 	skillDirs := []string{
@@ -124,6 +145,17 @@ func main() {
 	}
 	orch.SetModel(cfg.LLMModel)
 	orch.SetSystemPrompt(agent.DefaultSystemPrompt())
+
+	// Auto-configure Claude Code stop hook.
+	if notifier != nil {
+		executablePath, err := os.Executable()
+		if err != nil {
+			log.Printf("[main] warning: could not resolve executable path for Claude stop hook: %v", err)
+		}
+		if err := agent.EnsureStopHook(cfg.ClaudeDir, executablePath); err != nil {
+			log.Printf("[main] warning: could not configure Claude stop hook: %v", err)
+		}
+	}
 
 	if *chatMode {
 		runChat(ctx, orch)
@@ -275,6 +307,7 @@ func helpText() string {
 
 USAGE
   fingersaver [flags]
+  fingersaver notify <session> <status>
 
 FLAGS
   -h, --help      Show help
@@ -282,6 +315,9 @@ FLAGS
   --config        Show current configuration and exit
   --chat          CLI chat mode (no TUI, for e2e testing)
   --phone         Use phone layout (vertical split)
+
+SUBCOMMANDS
+  notify          Send agent stop notification (used by Claude Code Stop hook)
 
 CONFIGURATION
   FingerSaver reads from Claude settings (claude_dir/settings.json):
@@ -313,4 +349,49 @@ CHAT COMMANDS
   /layout phone   Switch to vertical (phone) layout
   /layout default Switch to horizontal (default) layout
 `
+}
+
+// runNotify sends an agent stop notification to the FingerSaver Unix socket.
+func runNotify() {
+	if len(os.Args) < 4 {
+		fmt.Fprintf(os.Stderr, "Usage: fingersaver notify <session> <status>\n")
+		os.Exit(1)
+	}
+	session := os.Args[2]
+	status := os.Args[3]
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "/tmp"
+	}
+	sockPath := filepath.Join(home, ".fingersaver", "hooks.sock")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
+	if err != nil {
+		// Silently exit — FingerSaver may not be running.
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	msg, err := json.Marshal(map[string]string{"session": session, "status": status})
+	if err != nil {
+		os.Exit(1)
+	}
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		os.Exit(1)
+	}
+	if _, err := conn.Write(msg); err != nil {
+		os.Exit(1)
+	}
+	if uc, ok := conn.(*net.UnixConn); ok {
+		_ = uc.CloseWrite()
+	}
+
+	buf := make([]byte, 64)
+	if _, err := conn.Read(buf); err != nil && !errors.Is(err, io.EOF) {
+		os.Exit(1)
+	}
 }
