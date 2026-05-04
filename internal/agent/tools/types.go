@@ -40,3 +40,12 @@ type Assessment struct {
 	Decision string `json:"decision"` // "approve", "reject", "idle", "unknown"
 	Reason   string `json:"reason"`
 }
+
+// Notifier receives agent stop notifications and provides wait channels.
+// Implemented by AgentNotifier in the agent package.
+type Notifier interface {
+	// WaitCh returns a channel that closes when the session's agent stops.
+	WaitCh(session string) <-chan struct{}
+	// Clear resets the notification state for a session.
+	Clear(session string)
+}

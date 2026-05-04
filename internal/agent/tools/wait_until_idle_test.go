@@ -13,7 +13,7 @@ func TestWaitUntilIdleTool(t *testing.T) {
 	mc := newMockTmuxClient()
 	mc.results[fmt.Sprintf("capture-pane -t %s -p -S -", "worker")] = "⏺ Done. All tests pass.\n❯ "
 
-	tool := NewWaitUntilIdleTool(mc)
+	tool := NewWaitUntilIdleTool(mc, nil)
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"session_name":    "worker",
 		"timeout_seconds": float64(10),
@@ -28,7 +28,7 @@ func TestWaitUntilIdleTimeout(t *testing.T) {
 	// Busy output — never idle.
 	mc.results[fmt.Sprintf("capture-pane -t %s -p -S -", "busy")] = "⏺ Running… go test ./..."
 
-	tool := NewWaitUntilIdleTool(mc)
+	tool := NewWaitUntilIdleTool(mc, nil)
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"session_name":    "busy",
 		"timeout_seconds": float64(1),
@@ -44,7 +44,7 @@ func TestWaitUntilIdleCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	tool := NewWaitUntilIdleTool(mc)
+	tool := NewWaitUntilIdleTool(mc, nil)
 	result, err := tool.Execute(ctx, map[string]any{
 		"session_name":    "stuck",
 		"timeout_seconds": float64(10),
@@ -55,7 +55,7 @@ func TestWaitUntilIdleCancel(t *testing.T) {
 
 func TestWaitUntilIdleMissingSession(t *testing.T) {
 	mc := newMockTmuxClient()
-	tool := NewWaitUntilIdleTool(mc)
+	tool := NewWaitUntilIdleTool(mc, nil)
 	_, err := tool.Execute(context.Background(), map[string]any{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "session_name is required")

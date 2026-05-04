@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func NewWaitUntilIdleTool(tc TmuxClient) Tool {
+func NewWaitUntilIdleTool(tc TmuxClient, notifier Notifier) Tool {
 	return Tool{
 		Name:        "wait_until_idle",
 		Description: "Poll a session until the agent returns to idle state, or timeout. Returns 'blocked' if a confirmation prompt is pending and needs a response (use assess_confirmation + respond_confirmation to handle).",
@@ -27,7 +27,7 @@ func NewWaitUntilIdleTool(tc TmuxClient) Tool {
 				timeoutSec = int(v)
 			}
 
-			result, waited := pollUntilIdle(ctx, tc, sessionName, timeoutSec)
+			result, waited := pollUntilIdle(ctx, tc, sessionName, timeoutSec, notifier)
 
 			data := map[string]any{
 				"status":         result["status"],
@@ -45,7 +45,7 @@ func NewWaitUntilIdleTool(tc TmuxClient) Tool {
 	}
 }
 
-func pollUntilIdle(ctx context.Context, tc TmuxClient, sessionName string, timeoutSec int) (map[string]string, time.Duration) {
+func pollUntilIdle(ctx context.Context, tc TmuxClient, sessionName string, timeoutSec int, notifier Notifier) (map[string]string, time.Duration) {
 	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
 	start := time.Now()
 
@@ -83,10 +83,25 @@ func pollUntilIdle(ctx context.Context, tc TmuxClient, sessionName string, timeo
 			return map[string]string{"status": "timeout"}, time.Since(start)
 		}
 
+		// Wait for either timeout, context cancellation, or agent stop notification.
+		var notifyCh <-chan struct{}
+		if notifier != nil {
+			notifyCh = notifier.WaitCh(sessionName)
+		}
+
 		select {
 		case <-ctx.Done():
 			return map[string]string{"status": "error"}, time.Since(start)
 		case <-time.After(wait):
+			// Continue polling.
+		case <-notifyCh:
+			// Agent reported stop via hook. Brief settle then verify.
+			time.Sleep(100 * time.Millisecond)
+			out, err = readStructured(tc, sessionName)
+			if err == nil && isIdle(out) {
+				return map[string]string{"status": "idle"}, time.Since(start)
+			}
+			// Notification received but not confirmed idle — continue polling.
 		}
 	}
 }
