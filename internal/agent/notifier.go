@@ -11,14 +11,6 @@ import (
 	"time"
 )
 
-// HookListener is the transport layer for receiving agent notifications.
-// Implementations include UnixSocketListener (local hooks) and can be
-// extended with HTTPListener (remote/phone) later.
-type HookListener interface {
-	Start(ctx context.Context, handler func(session, status string)) error
-	Stop()
-}
-
 // hookPayload is the JSON message sent to the socket.
 type hookPayload struct {
 	Session string `json:"session"`
@@ -33,6 +25,7 @@ type AgentNotifier struct {
 	sockPath string
 	listener net.Listener
 	done     chan struct{}
+	stopOnce sync.Once
 }
 
 func NewAgentNotifier() *AgentNotifier {
@@ -110,12 +103,15 @@ func (n *AgentNotifier) Start(ctx context.Context) error {
 }
 
 // Stop closes the listener and cleans up the socket file.
+// Safe to call multiple times.
 func (n *AgentNotifier) Stop() {
-	close(n.done)
-	if n.listener != nil {
-		n.listener.Close()
-	}
-	os.Remove(n.sockPath)
+	n.stopOnce.Do(func() {
+		close(n.done)
+		if n.listener != nil {
+			n.listener.Close()
+		}
+		os.Remove(n.sockPath)
+	})
 }
 
 func (n *AgentNotifier) acceptLoop(ctx context.Context) {
@@ -156,9 +152,4 @@ func (n *AgentNotifier) handleConn(conn net.Conn) {
 
 	n.Notify(msg.Session, msg.Status)
 	conn.Write([]byte("ok\n"))
-}
-
-// SockPath returns the Unix socket path, used by the notify subcommand.
-func (n *AgentNotifier) SockPath() string {
-	return n.sockPath
 }

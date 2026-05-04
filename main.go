@@ -123,8 +123,7 @@ func main() {
 	cwd, _ := os.Getwd()
 
 	// Create hook notifier for agent stop notifications.
-	var notifier *agent.AgentNotifier
-	notifier = agent.NewAgentNotifier()
+	notifier := agent.NewAgentNotifier()
 	if err := notifier.Start(ctx); err != nil {
 		log.Printf("[main] warning: hook notifier failed to start: %v", err)
 		notifier = nil

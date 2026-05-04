@@ -49,6 +49,11 @@ func pollUntilIdle(ctx context.Context, tc TmuxClient, sessionName string, timeo
 	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
 	start := time.Now()
 
+	// Clean up notifier state on exit to prevent channel leaks.
+	if notifier != nil {
+		defer notifier.Clear(sessionName)
+	}
+
 	for {
 		if ctx.Err() != nil {
 			return map[string]string{"status": "error"}, time.Since(start)
