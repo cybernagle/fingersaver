@@ -66,12 +66,51 @@ var blockedPatterns = []struct {
 }
 
 func isBlockedCommand(message string) (bool, string) {
-	for _, p := range blockedPatterns {
-		if p.re.MatchString(message) {
-			return true, p.pattern
+	parts := splitChainedCommands(message)
+
+	// Check each part against blocklist.
+	for _, part := range parts {
+		for _, p := range blockedPatterns {
+			if p.re.MatchString(part) {
+				return true, p.pattern
+			}
 		}
 	}
+
+	// Detect distributed rm -rf: -r in one rm command, -f in another.
+	var foundRecursive, foundForce bool
+	for _, part := range parts {
+		if rmRecursiveFlagRe.MatchString(part) {
+			foundRecursive = true
+		}
+		if rmForceFlagRe.MatchString(part) {
+			foundForce = true
+		}
+	}
+	if foundRecursive && foundForce {
+		return true, "rm -rf"
+	}
 	return false, ""
+}
+
+// rmRecursiveFlagRe matches an rm command containing -r or --recursive.
+var rmRecursiveFlagRe = regexp.MustCompile(`(?i)\brm\b.*(?:-[a-zA-Z]*r|--recursive\b)`)
+
+// rmForceFlagRe matches an rm command containing -f or --force.
+var rmForceFlagRe = regexp.MustCompile(`(?i)\brm\b.*(?:-[a-zA-Z]*f|--force\b)`)
+
+// splitChainedCommands splits a command string by && and ; delimiters.
+func splitChainedCommands(cmd string) []string {
+	var parts []string
+	for _, segment := range strings.Split(cmd, "&&") {
+		for _, sub := range strings.Split(segment, ";") {
+			trimmed := strings.TrimSpace(sub)
+			if trimmed != "" {
+				parts = append(parts, trimmed)
+			}
+		}
+	}
+	return parts
 }
 
 // DirectSend bypasses all safety checks — used by @session manual mode.

@@ -62,6 +62,20 @@ func TestResolvePath(t *testing.T) {
 	})
 }
 
+func TestResolvePath_SymlinkEscape(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Create a file outside the workdir.
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "secret.txt")
+	require.NoError(t, os.WriteFile(outsideFile, []byte("secret"), 0o644))
+	// Create symlink inside workdir pointing outside.
+	require.NoError(t, os.Symlink(outsideFile, filepath.Join(tmpDir, "link")))
+
+	_, err := resolvePath("link", tmpDir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes working directory")
+}
+
 func TestReadFileTool(t *testing.T) {
 	tmpDir := t.TempDir()
 	content := "line 1\nline 2\nline 3\nline 4\nline 5\n"
@@ -298,6 +312,9 @@ func TestSendSafety(t *testing.T) {
 		{"reboot", "reboot", true, "reboot"},
 		{"safe rm", "rm tempfile.txt", false, ""},
 		{"safe curl", "curl -o file.html https://example.com", false, ""},
+		{"rm -r && rm -f chain", "rm -r /tmp && rm -f /tmp", true, "rm -rf"},
+		{"rm -r ; rm -f chain", "rm -r / ; rm -f /", true, "rm -rf"},
+		{"safe && chain", "ls && echo hello", false, ""},
 	}
 
 	for _, tt := range tests {
