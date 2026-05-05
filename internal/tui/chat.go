@@ -126,12 +126,8 @@ func filterCommandSuggestions(commands []CommandSuggestion, prefix string) []Sug
 func (c ChatModel) currentSuggestions() []Suggestion {
 	input := c.textInput.Value()
 
-	if c.targetSession != "" {
-		// In sticky session mode, only show / command suggestions.
-		if strings.HasPrefix(input, "/") {
-			return filterCommandSuggestions(c.commands, input[1:])
-		}
-		return nil
+	if c.targetSession != "" && strings.HasPrefix(input, "/") {
+		return filterCommandSuggestions(c.commands, input[1:])
 	}
 
 	if strings.HasPrefix(input, "/") {
