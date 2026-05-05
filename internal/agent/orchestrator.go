@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -319,14 +320,16 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 		if err != nil {
 			errMsg := err.Error()
 			if isRetryableError(errMsg) {
-				log.Printf("[orchestrator] LLM retryable error: %v, waiting 3m", err)
-				ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("LLM error (retrying in 3m): %v", err)}
+				jitter := time.Duration(rand.Intn(30)) * time.Second
+				wait := 3*time.Minute + jitter
+				log.Printf("[orchestrator] LLM retryable error: %v, waiting %s", err, wait)
+				ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("LLM error (retrying in %s): %v", wait.Round(time.Second), err)}
 				select {
 				case <-ctx.Done():
 					ch <- OrchestratorEvent{Type: EventText, Content: "Cancelled."}
 					ch <- OrchestratorEvent{Type: EventDone}
 					return
-				case <-time.After(3 * time.Minute):
+				case <-time.After(wait):
 					continue
 				}
 			}
@@ -469,10 +472,12 @@ func parseJSONArgs(raw string) map[string]any {
 // isRetryableError checks if an LLM error message indicates a server-side
 // issue (4xx/5xx) that may resolve after waiting.
 func isRetryableError(errMsg string) bool {
-	retryable := []string{"429", "500", "502", "503", "504", "overloaded", "rate limit", "capacity"}
 	lower := strings.ToLower(errMsg)
-	for _, pattern := range retryable {
-		if strings.Contains(lower, pattern) {
+	for _, p := range []string{
+		"status 429", "status 500", "status 502", "status 503", "status 504",
+		"overloaded", "rate limit", "capacity",
+	} {
+		if strings.Contains(lower, p) {
 			return true
 		}
 	}

@@ -34,7 +34,7 @@ var (
 	phoneLayout = flag.Bool("phone", false, "Use phone layout (vertical split)")
 )
 
-const version = "0.4.8"
+const version = "0.4.9"
 
 func main() {
 	// Handle subcommands that communicate with a running FingerSaver instance.
@@ -148,27 +148,8 @@ func main() {
 	orch.SetModel(cfg.LLMModel)
 	orch.SetSystemPrompt(agent.DefaultSystemPrompt())
 
-	if *chatMode {
-		// Start notifier for chat mode too (wait_until_idle support).
-		if err := notifier.Start(ctx); err != nil {
-			log.Printf("[main] warning: hook notifier failed to start: %v", err)
-		} else {
-			defer notifier.Stop()
-		}
-		runChat(ctx, orch)
-		return
-	}
-
-	// Create and run TUI.
-	app := tui.NewAppModel(orch, tc)
-	if *phoneLayout {
-		app.SetLayout(tui.LayoutPhone)
-	}
-
 	// Register callbacks BEFORE Start to avoid race condition.
-	notifier.OnChat(func(role, content string) {
-		app.SendChatMessage(role, content)
-	})
+	// These must be set before both --chat and TUI paths.
 	notifier.OnSession(func(session, content string) error {
 		return tools.DirectSend(tc, session, content)
 	})
@@ -181,14 +162,28 @@ func main() {
 		defer notifier.Stop()
 
 		// Auto-configure Claude Code stop hook.
-		executablePath, err := os.Executable()
-		if err != nil {
+		if executablePath, err := os.Executable(); err != nil {
 			log.Printf("[main] warning: could not resolve executable path for Claude stop hook: %v", err)
-		}
-		if err := agent.EnsureStopHook(cfg.ClaudeDir, executablePath); err != nil {
+		} else if err := agent.EnsureStopHook(cfg.ClaudeDir, executablePath); err != nil {
 			log.Printf("[main] warning: could not configure Claude stop hook: %v", err)
 		}
 	}
+
+	if *chatMode {
+		runChat(ctx, orch)
+		return
+	}
+
+	// Create and run TUI.
+	app := tui.NewAppModel(orch, tc)
+	if *phoneLayout {
+		app.SetLayout(tui.LayoutPhone)
+	}
+
+	// Register TUI-specific chat callback after app is created.
+	notifier.OnChat(func(role, content string) {
+		app.SendChatMessage(role, content)
+	})
 
 	// Set up chat history persistence.
 	if cfg.ChatHistoryPath != "" {
@@ -401,13 +396,16 @@ func runSocketCommand(msgType string) {
 
 	msg, err := json.Marshal(payload)
 	if err != nil {
-		os.Exit(0)
+		fmt.Fprintf(os.Stderr, "error: marshal: %v\n", err)
+		os.Exit(1)
 	}
 	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		os.Exit(0)
+		fmt.Fprintf(os.Stderr, "error: deadline: %v\n", err)
+		os.Exit(1)
 	}
 	if _, err := conn.Write(msg); err != nil {
-		os.Exit(0)
+		fmt.Fprintf(os.Stderr, "error: write: %v\n", err)
+		os.Exit(1)
 	}
 	if uc, ok := conn.(*net.UnixConn); ok {
 		_ = uc.CloseWrite()
@@ -445,7 +443,7 @@ func buildSocketPayload(msgType string) map[string]string {
 		return map[string]string{
 			"type":    "chat",
 			"role":    os.Args[2],
-			"content": os.Args[3],
+			"content": strings.Join(os.Args[3:], " "),
 		}
 	case "session":
 		if len(os.Args) < 4 {
@@ -455,7 +453,7 @@ func buildSocketPayload(msgType string) map[string]string {
 		return map[string]string{
 			"type":    "session",
 			"session": os.Args[2],
-			"content": os.Args[3],
+			"content": strings.Join(os.Args[3:], " "),
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n", msgType)

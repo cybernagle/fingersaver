@@ -11,7 +11,7 @@ import (
 func NewWaitUntilIdleTool(tc TmuxClient, notifier Notifier) Tool {
 	return Tool{
 		Name:        "wait_until_idle",
-		Description: "Poll a session until the agent returns to idle state, or timeout. Returns 'blocked' if a confirmation prompt is pending and needs a response (use assess_confirmation + respond_confirmation to handle).",
+		Description: "Wait for a session agent to finish, then return its output. Combines waiting and reading — no need to call read_session_output afterwards.",
 		Parameters: []Param{
 			{Name: "session_name", Type: "string", Description: "Session name to poll", Required: true},
 			{Name: "timeout_seconds", Type: "number", Description: "Max wait time in seconds (default 300)"},
@@ -29,9 +29,26 @@ func NewWaitUntilIdleTool(tc TmuxClient, notifier Notifier) Tool {
 
 			result, waited := pollUntilIdle(ctx, tc, sessionName, timeoutSec, notifier)
 
+			// Always capture final output so the LLM doesn't need read_session_output.
+			out, err := readStructured(tc, sessionName)
 			data := map[string]any{
 				"status":         result["status"],
 				"waited_seconds": fmt.Sprintf("%.1f", waited.Seconds()),
+			}
+			if err == nil {
+				lines := strings.Split(out.RawOutput, "\n")
+				tailStart := len(lines) - 20
+				if tailStart < 0 {
+					tailStart = 0
+				}
+				data["output_tail"] = strings.Join(lines[tailStart:], "\n")
+				data["status_detail"] = out.Status
+				if len(out.Errors) > 0 {
+					data["errors"] = out.Errors
+				}
+				if len(out.FilesModified) > 0 {
+					data["files_modified"] = out.FilesModified
+				}
 			}
 			if v, ok := result["pending_prompt"]; ok {
 				data["pending_prompt"] = v

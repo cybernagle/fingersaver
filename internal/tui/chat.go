@@ -157,6 +157,9 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		c.width = msg.Width
 		c.height = msg.Height
 
+	case ExternalChatMsg:
+		c.appendMessage(msg.Role, msg.Content)
+
 	case spinnerTickMsg:
 		if c.working {
 			c.spinnerFrame = (c.spinnerFrame + 1) % len(spinnerFrames)
@@ -249,6 +252,10 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if strings.HasPrefix(strings.TrimSpace(text), "@") {
 					return c, func() tea.Msg { return SubmitMsg{Text: text} }
 				}
+				if len(c.pendingQueue) >= 50 {
+					c.appendMessage("system", "Queue full (50 messages). Wait for current task to finish.")
+					return c, nil
+				}
 				c.pendingQueue = append(c.pendingQueue, text)
 				c.appendMessage("system", fmt.Sprintf("(queued #%d, will send when current task finishes)", len(c.pendingQueue)))
 				return c, nil
@@ -335,7 +342,6 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				c.working = true
 				c.workStart = time.Now()
 				c.spinnerFrame = 0
-				c.appendMessage("user", text)
 				return c, tea.Batch(
 					func() tea.Msg { return SubmitMsg{Text: text} },
 					tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return spinnerTickMsg(t) }),

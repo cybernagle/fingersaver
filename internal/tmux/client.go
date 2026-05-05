@@ -258,10 +258,11 @@ func (c *Client) pollSessions(ctx context.Context, knownSessions map[string]stri
 
 		if c.keepAlive != nil {
 			if attached == "0" {
-				log.Printf("[tmux] session %s unattached, removing stale keepalive", name)
-				c.keepAlive.Remove(name)
+				if c.keepAlive.Remove(name) {
+					log.Printf("[tmux] session %s unattached, removed stale keepalive", name)
+				}
 			}
-			if err := c.keepAlive.Add(ctx, name); err != nil {
+			if err := c.keepAlive.Add(name); err != nil {
 				log.Printf("[tmux] keepalive add %s: %v", name, err)
 			}
 		}

@@ -143,11 +143,7 @@ func isFingerSaverNotifyHook(command string) bool {
 }
 
 func buildStopHookCommand(executablePath string) string {
-	command := executablePath
-	if command == "" {
-		command = "fingersaver"
-	}
-	return shellQuote(command) + fsNotifyHookSuffix
+	return shellQuote(executablePath) + fsNotifyHookSuffix
 }
 
 func shellQuote(value string) string {

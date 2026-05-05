@@ -213,9 +213,6 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 		return a, tea.Batch(cmds...)
 
-	case ExternalChatMsg:
-		a.chat.AppendMessage(msg.Role, msg.Content)
-		return a, tea.Batch(cmds...)
 	}
 
 	// Route key and mouse events to focused pane.
