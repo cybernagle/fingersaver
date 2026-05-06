@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -219,6 +220,13 @@ func (n *AgentNotifier) handleConn(conn net.Conn) {
 			return
 		}
 		n.Notify(msg.Session, msg.Status)
+		if onChat != nil {
+			status := msg.Status
+			if status == "" {
+				status = "stopped"
+			}
+			onChat("system", fmt.Sprintf("Session %s %s", msg.Session, status))
+		}
 	}
 
 	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
