@@ -16,6 +16,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.NotEmpty(t, cfg.TmuxSocketPath)
 	assert.NotEmpty(t, cfg.ChatHistoryPath)
 	assert.Contains(t, cfg.DataDir, ".fingersaver")
+	assert.Equal(t, 40, cfg.MaxContextMessages)
 }
 
 func TestLoadCreatesDataDir(t *testing.T) {
@@ -104,4 +105,44 @@ func TestKeyHint(t *testing.T) {
 	assert.Equal(t, "(not set)", keyHint(""))
 	assert.Equal(t, "****", keyHint("short"))
 	assert.Equal(t, "sk-t********5678", keyHint("sk-test-12345678"))
+}
+
+func TestMaxContextMessagesEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("FINGERSAVER_DATA_DIR", tmpDir)
+	t.Setenv("FINGERSAVER_LLM_PROVIDER", "openai")
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("FINGERSAVER_MAX_CONTEXT_MESSAGES", "20")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 20, cfg.MaxContextMessages)
+}
+
+func TestMaxContextMessagesZeroDisablesLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("FINGERSAVER_DATA_DIR", tmpDir)
+	t.Setenv("FINGERSAVER_LLM_PROVIDER", "openai")
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("FINGERSAVER_MAX_CONTEXT_MESSAGES", "0")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 0, cfg.MaxContextMessages)
+}
+
+func TestMaxContextMessagesFromConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, ".fingersaver")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+
+	configData := `{"llm_provider": "openai", "max_context_messages": 60}`
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.json"), []byte(configData), 0o644))
+
+	t.Setenv("FINGERSAVER_DATA_DIR", dataDir)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 60, cfg.MaxContextMessages)
 }

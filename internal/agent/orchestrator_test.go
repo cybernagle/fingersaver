@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -287,6 +288,184 @@ func (m *blockingProvider) Complete(ctx context.Context, messages []llm.Message,
 
 func (m *blockingProvider) Stream(ctx context.Context, messages []llm.Message, opts llm.GenerateOptions) (<-chan llm.StreamEvent, error) {
 	ch := make(chan llm.StreamEvent)
+	close(ch)
+	return ch, nil
+}
+
+func newTestOrchestrator(maxContextMessages int) *Orchestrator {
+	mc := newMockTmuxClient()
+	mp := &mockProvider{}
+	orch := NewOrchestrator(mp, mc, NewHookManager(), tools.AllTools(mc, nil, "/tmp", nil))
+	orch.SetMaxContextMessages(maxContextMessages)
+	return orch
+}
+
+func TestSnapshotMessagesTruncation(t *testing.T) {
+	orch := newTestOrchestrator(4)
+	for i := 0; i < 8; i++ {
+		role := llm.RoleUser
+		if i%2 == 1 {
+			role = llm.RoleAssistant
+		}
+		orch.appendMessage(llm.Message{Role: role, Content: fmt.Sprintf("msg %d", i)})
+	}
+
+	msgs := orch.snapshotMessages()
+	assert.Len(t, msgs, 4)
+	assert.Equal(t, llm.RoleUser, msgs[0].Role)
+	assert.Equal(t, "msg 4", msgs[0].Content)
+	assert.Equal(t, "msg 7", msgs[3].Content)
+
+	// Full history preserved in o.messages via Messages()
+	all := orch.Messages()
+	assert.Len(t, all, 8)
+}
+
+func TestSnapshotMessagesNoTruncationWhenUnderLimit(t *testing.T) {
+	orch := newTestOrchestrator(10)
+	for i := 0; i < 3; i++ {
+		orch.appendMessage(llm.Message{Role: llm.RoleUser, Content: fmt.Sprintf("msg %d", i)})
+	}
+	msgs := orch.snapshotMessages()
+	assert.Len(t, msgs, 3)
+}
+
+func TestSnapshotMessagesTrimmedToUserBoundary(t *testing.T) {
+	orch := newTestOrchestrator(3)
+	// Build: user, assistant, assistant, user, assistant, user
+	// If we keep last 3: assistant, user, assistant — first is not user, skip to user
+	orch.appendMessage(llm.Message{Role: llm.RoleUser, Content: "u1"})
+	orch.appendMessage(llm.Message{Role: llm.RoleAssistant, Content: "a1"})
+	orch.appendMessage(llm.Message{Role: llm.RoleAssistant, Content: "a2"})
+	orch.appendMessage(llm.Message{Role: llm.RoleUser, Content: "u2"})
+	orch.appendMessage(llm.Message{Role: llm.RoleAssistant, Content: "a3"})
+	orch.appendMessage(llm.Message{Role: llm.RoleUser, Content: "u3"})
+
+	msgs := orch.snapshotMessages()
+	assert.Equal(t, llm.RoleUser, msgs[0].Role)
+	assert.Equal(t, "u2", msgs[0].Content)
+}
+
+func TestContextOverflowRecovery(t *testing.T) {
+	mc := newMockTmuxClient()
+	cp := &contextOverflowProvider{}
+	orch := NewOrchestrator(cp, mc, NewHookManager(), tools.AllTools(mc, nil, "/tmp", nil))
+
+	for i := 0; i < 6; i++ {
+		role := llm.RoleUser
+		if i%2 == 1 {
+			role = llm.RoleAssistant
+		}
+		orch.appendMessage(llm.Message{Role: role, Content: fmt.Sprintf("msg %d", i)})
+	}
+	initialCount := orch.messageCount()
+
+	events, err := orch.ProcessInput(context.Background(), "test")
+	require.NoError(t, err)
+
+	var texts []string
+	var done bool
+	for e := range events {
+		if e.Type == EventText {
+			texts = append(texts, e.Content)
+		}
+		if e.Type == EventDone {
+			done = true
+		}
+	}
+	assert.True(t, done)
+	assert.Contains(t, texts[len(texts)-1], "recovered")
+	// After recovery: user msg added (+1), oldest turn trimmed (-2: user+assistant),
+	// then assistant response added (+1). Net: 6 - 2 + 2 = 6 == initialCount+0, which is < initialCount+2.
+	assert.Less(t, orch.messageCount(), initialCount+2)
+}
+
+func TestTrimOldestTurn(t *testing.T) {
+	orch := newTestOrchestrator(0)
+
+	orch.appendMessage(llm.Message{Role: llm.RoleUser, Content: "u1"})
+	orch.appendMessage(llm.Message{Role: llm.RoleAssistant, Content: "a1", ToolCalls: []llm.ToolCall{{ID: "tc_1", Name: "test"}}})
+	orch.appendMessage(llm.Message{Role: llm.RoleTool, ToolResults: []llm.ToolResult{{CallID: "tc_1", Content: "result"}}})
+	orch.appendMessage(llm.Message{Role: llm.RoleUser, Content: "u2"})
+	orch.appendMessage(llm.Message{Role: llm.RoleAssistant, Content: "a2"})
+
+	orch.trimOldestTurn()
+
+	msgs := orch.Messages()
+	assert.Len(t, msgs, 2)
+	assert.Equal(t, llm.RoleUser, msgs[0].Role)
+	assert.Equal(t, "u2", msgs[0].Content)
+	assert.Equal(t, "a2", msgs[1].Content)
+}
+
+// contextOverflowProvider returns context_length_exceeded on first call, then succeeds.
+type contextOverflowProvider struct {
+	called int
+}
+
+func (p *contextOverflowProvider) Name() string { return "overflow" }
+
+func (p *contextOverflowProvider) Complete(ctx context.Context, messages []llm.Message, opts llm.GenerateOptions) (*llm.CompleteResult, error) {
+	p.called++
+	if p.called == 1 {
+		return nil, errors.New("request too large: context_length_exceeded: token count 210000 > max 200000")
+	}
+	return &llm.CompleteResult{Content: "recovered", StopReason: "end_turn"}, nil
+}
+
+func (p *contextOverflowProvider) Stream(ctx context.Context, messages []llm.Message, opts llm.GenerateOptions) (<-chan llm.StreamEvent, error) {
+	ch := make(chan llm.StreamEvent, 1)
+	ch <- llm.StreamEvent{Type: llm.EventDone}
+	close(ch)
+	return ch, nil
+}
+
+func TestContextOverflowUnrecoverable(t *testing.T) {
+	mc := newMockTmuxClient()
+	up := &unrecoverableOverflowProvider{}
+	orch := NewOrchestrator(up, mc, NewHookManager(), tools.AllTools(mc, nil, "/tmp", nil))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		events, err := orch.ProcessInput(context.Background(), "huge message")
+		assert.NoError(t, err)
+
+		var texts []string
+		var gotDone bool
+		for e := range events {
+			if e.Type == EventText {
+				texts = append(texts, e.Content)
+			}
+			if e.Type == EventDone {
+				gotDone = true
+			}
+		}
+		assert.True(t, gotDone)
+		if assert.NotEmpty(t, texts, "expected at least one text event") {
+			assert.Contains(t, texts[len(texts)-1], "too long")
+		}
+	}()
+
+	select {
+	case <-done:
+		// Test completed — no infinite loop.
+	case <-time.After(5 * time.Second):
+		t.Fatal("TestContextOverflowUnrecoverable timed out — possible infinite retry loop")
+	}
+}
+
+type unrecoverableOverflowProvider struct{}
+
+func (p *unrecoverableOverflowProvider) Name() string { return "unrecoverable" }
+
+func (p *unrecoverableOverflowProvider) Complete(ctx context.Context, messages []llm.Message, opts llm.GenerateOptions) (*llm.CompleteResult, error) {
+	return nil, errors.New("context_length_exceeded: token count 500000 > max 200000")
+}
+
+func (p *unrecoverableOverflowProvider) Stream(ctx context.Context, messages []llm.Message, opts llm.GenerateOptions) (<-chan llm.StreamEvent, error) {
+	ch := make(chan llm.StreamEvent, 1)
+	ch <- llm.StreamEvent{Type: llm.EventDone}
 	close(ch)
 	return ch, nil
 }

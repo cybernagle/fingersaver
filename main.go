@@ -34,7 +34,7 @@ var (
 	phoneLayout = flag.Bool("phone", false, "Use phone layout (vertical split)")
 )
 
-const version = "0.4.9"
+const version = "0.4.10"
 
 func main() {
 	// Handle subcommands that communicate with a running FingerSaver instance.
@@ -146,6 +146,7 @@ func main() {
 		log.Printf("[main] warning: could not load skills: %v", err)
 	}
 	orch.SetModel(cfg.LLMModel)
+	orch.SetMaxContextMessages(cfg.MaxContextMessages)
 	orch.SetSystemPrompt(agent.DefaultSystemPrompt())
 
 	// Register callbacks BEFORE Start to avoid race condition.

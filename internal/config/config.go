@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -16,16 +17,17 @@ const (
 )
 
 type Config struct {
-	LLMProvider     string `json:"llm_provider"`
-	LLMModel        string `json:"llm_model"`
-	LLMAPIKey       string `json:"-"`
-	LLMBaseURL      string `json:"llm_base_url,omitempty"`
-	TmuxMode        string `json:"tmux_mode"`
-	TmuxSocketPath  string `json:"tmux_socket_path"`
-	DataDir         string `json:"data_dir"`
-	ChatHistoryPath string `json:"chat_history_path"`
-	ClaudeDir       string `json:"claude_dir"`
-	GuardianPrompt  string `json:"guardian_prompt,omitempty"`
+	LLMProvider        string `json:"llm_provider"`
+	LLMModel           string `json:"llm_model"`
+	LLMAPIKey          string `json:"-"`
+	LLMBaseURL         string `json:"llm_base_url,omitempty"`
+	TmuxMode           string `json:"tmux_mode"`
+	TmuxSocketPath     string `json:"tmux_socket_path"`
+	DataDir            string `json:"data_dir"`
+	ChatHistoryPath    string `json:"chat_history_path"`
+	ClaudeDir          string `json:"claude_dir"`
+	GuardianPrompt     string `json:"guardian_prompt,omitempty"`
+	MaxContextMessages int    `json:"max_context_messages"`
 }
 
 func homeDir() string {
@@ -39,13 +41,14 @@ func DefaultConfig() *Config {
 	home := homeDir()
 	dataDir := filepath.Join(home, ".fingersaver")
 	return &Config{
-		LLMProvider:     "",
-		LLMModel:        "",
-		TmuxMode:        TmuxModeAuto,
-		TmuxSocketPath:  filepath.Join(dataDir, "tmux.sock"),
-		DataDir:         dataDir,
-		ChatHistoryPath: filepath.Join(dataDir, "chat.md"),
-		ClaudeDir:       filepath.Join(home, ".claude"),
+		LLMProvider:        "",
+		LLMModel:           "",
+		TmuxMode:           TmuxModeAuto,
+		TmuxSocketPath:     filepath.Join(dataDir, "tmux.sock"),
+		DataDir:            dataDir,
+		ChatHistoryPath:    filepath.Join(dataDir, "chat.md"),
+		ClaudeDir:          filepath.Join(home, ".claude"),
+		MaxContextMessages: 40,
 	}
 }
 
@@ -138,6 +141,13 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if v := os.Getenv("FINGERSAVER_LLM_BASE_URL"); v != "" {
 		c.LLMBaseURL = v
+	}
+	if v := os.Getenv("FINGERSAVER_MAX_CONTEXT_MESSAGES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			c.MaxContextMessages = n
+		} else if err != nil {
+			log.Printf("[config] warning: invalid FINGERSAVER_MAX_CONTEXT_MESSAGES: %q, ignored", v)
+		}
 	}
 }
 
@@ -265,6 +275,7 @@ func (c *Config) Summary() string {
 	}
 	sb.WriteString(fmt.Sprintf("  Tmux Socket: %s\n", c.TmuxSocketPath))
 	sb.WriteString(fmt.Sprintf("  Tmux Mode:   %s\n", c.TmuxMode))
+	sb.WriteString(fmt.Sprintf("  Max Context: %d messages\n", c.MaxContextMessages))
 	return sb.String()
 }
 

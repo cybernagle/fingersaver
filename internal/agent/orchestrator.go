@@ -47,21 +47,22 @@ type OrchestratorEvent struct {
 }
 
 type Orchestrator struct {
-	provider     llm.Provider
-	tc           tools.TmuxClient
-	toolList     []tools.Tool
-	toolMap      map[string]tools.Tool
-	commands     *CommandRegistry
-	hooks        *HookManager
-	msgMu        sync.Mutex
-	messages     []llm.Message
-	systemPrompt string
-	model        string
-	callTimeout  time.Duration
-	cancelMu     sync.Mutex
-	cancelFn     context.CancelFunc
-	skillMu      sync.Mutex
-	activeSkill  *skills.Skill
+	provider           llm.Provider
+	tc                 tools.TmuxClient
+	toolList           []tools.Tool
+	toolMap            map[string]tools.Tool
+	commands           *CommandRegistry
+	hooks              *HookManager
+	msgMu              sync.Mutex
+	messages           []llm.Message
+	systemPrompt       string
+	model              string
+	maxContextMessages int
+	callTimeout        time.Duration
+	cancelMu           sync.Mutex
+	cancelFn           context.CancelFunc
+	skillMu            sync.Mutex
+	activeSkill        *skills.Skill
 }
 
 func NewOrchestrator(provider llm.Provider, tc tools.TmuxClient, hooks *HookManager, toolList []tools.Tool) *Orchestrator {
@@ -96,6 +97,10 @@ func (o *Orchestrator) SetCallTimeout(d time.Duration) {
 	o.callTimeout = d
 }
 
+func (o *Orchestrator) SetMaxContextMessages(n int) {
+	o.maxContextMessages = n
+}
+
 func (o *Orchestrator) LoadSkills(dirs []string) error {
 	all, err := skills.LoadAll(dirs)
 	if err != nil {
@@ -125,7 +130,11 @@ func (o *Orchestrator) Commands() []*SlashCommand {
 }
 
 func (o *Orchestrator) Messages() []llm.Message {
-	return o.snapshotMessages()
+	o.msgMu.Lock()
+	defer o.msgMu.Unlock()
+	cp := make([]llm.Message, len(o.messages))
+	copy(cp, o.messages)
+	return cp
 }
 
 func (o *Orchestrator) Hooks() *HookManager {
@@ -147,11 +156,35 @@ func (o *Orchestrator) appendMessage(msg llm.Message) {
 	o.msgMu.Unlock()
 }
 
+func (o *Orchestrator) messageCount() int {
+	o.msgMu.Lock()
+	defer o.msgMu.Unlock()
+	return len(o.messages)
+}
+
 func (o *Orchestrator) snapshotMessages() []llm.Message {
 	o.msgMu.Lock()
 	defer o.msgMu.Unlock()
-	cp := make([]llm.Message, len(o.messages))
-	copy(cp, o.messages)
+
+	if o.maxContextMessages <= 0 || len(o.messages) <= o.maxContextMessages {
+		cp := make([]llm.Message, len(o.messages))
+		copy(cp, o.messages)
+		return cp
+	}
+
+	trimmed := o.messages[len(o.messages)-o.maxContextMessages:]
+	for len(trimmed) > 0 && trimmed[0].Role != llm.RoleUser {
+		trimmed = trimmed[1:]
+	}
+	if len(trimmed) == 0 {
+		cp := make([]llm.Message, len(o.messages))
+		copy(cp, o.messages)
+		return cp
+	}
+
+	log.Printf("[orchestrator] context window: trimmed %d messages to %d (maxContextMessages=%d)", len(o.messages), len(trimmed), o.maxContextMessages)
+	cp := make([]llm.Message, len(trimmed))
+	copy(cp, trimmed)
 	return cp
 }
 
@@ -320,6 +353,17 @@ func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEven
 		if err != nil {
 			errMsg := err.Error()
 			if isRetryableError(errMsg) {
+				if isContextOverflow(errMsg) {
+					if o.messageCount() > 2 {
+						o.trimOldestTurn()
+						log.Printf("[orchestrator] trimmed messages to %d after context overflow", o.messageCount())
+						continue
+					}
+					log.Printf("[orchestrator] context overflow with too few messages to trim")
+					ch <- OrchestratorEvent{Type: EventText, Content: "Your message is too long for the model's context window. Please shorten it and try again."}
+					ch <- OrchestratorEvent{Type: EventDone}
+					return
+				}
 				jitter := time.Duration(rand.Intn(30)) * time.Second
 				wait := 3*time.Minute + jitter
 				log.Printf("[orchestrator] LLM retryable error: %v, waiting %s", err, wait)
@@ -472,6 +516,9 @@ func parseJSONArgs(raw string) map[string]any {
 // isRetryableError checks if an LLM error message indicates a server-side
 // issue (4xx/5xx) that may resolve after waiting.
 func isRetryableError(errMsg string) bool {
+	if isContextOverflow(errMsg) {
+		return true
+	}
 	lower := strings.ToLower(errMsg)
 	for _, p := range []string{
 		"status 429", "status 500", "status 502", "status 503", "status 504",
@@ -482,6 +529,29 @@ func isRetryableError(errMsg string) bool {
 		}
 	}
 	return false
+}
+
+func isContextOverflow(errMsg string) bool {
+	lower := strings.ToLower(errMsg)
+	for _, p := range []string{"context_length_exceeded", "context window", "too many tokens"} {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (o *Orchestrator) trimOldestTurn() {
+	o.msgMu.Lock()
+	defer o.msgMu.Unlock()
+	if len(o.messages) < 2 {
+		return
+	}
+	end := 1
+	for end < len(o.messages) && o.messages[end].Role != llm.RoleUser {
+		end++
+	}
+	o.messages = o.messages[end:]
 }
 
 func DefaultSystemPrompt() string {
