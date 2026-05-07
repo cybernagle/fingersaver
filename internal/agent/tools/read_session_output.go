@@ -35,12 +35,6 @@ func NewReadSessionOutputTool(tc TmuxClient) Tool {
 				offset = int(v)
 			}
 
-			// Capture full scrollback to count total lines.
-			all, err := tc.Exec(tmux.CapturePaneAllCmd(name))
-			if err != nil {
-				return "", fmt.Errorf("capture pane %q: %w", name, err)
-			}
-
 			emptyResult := func() (string, error) {
 				result, _ := json.Marshal(map[string]any{
 					"content":     "",
@@ -52,18 +46,61 @@ func NewReadSessionOutputTool(tc TmuxClient) Tool {
 				return string(result), nil
 			}
 
+			var allLines []string
+			var totalLines int
+
+			if offset == 0 {
+				// Common case: read only the tail from tmux, no full scrollback needed.
+				captureCount := lines + 1 // +1 to detect has_more
+				raw, err := tc.Exec(tmux.CapturePaneRangeCmd(name, captureCount, 0))
+				if err != nil {
+					return "", fmt.Errorf("capture pane %q: %w", name, err)
+				}
+				if raw == "" {
+					return emptyResult()
+				}
+				allLines = splitNonEmpty(raw)
+				// If we got more lines than requested, there's more content above.
+				hasMore := len(allLines) > lines
+				if hasMore {
+					allLines = allLines[len(allLines)-lines:]
+				}
+				// totalLines is approximate — only accurate if we didn't truncate.
+				// For the no-offset case the LLM only needs the content and has_more.
+				totalLines = len(allLines)
+				if hasMore {
+					// Get accurate total only when it matters for pagination display.
+					full, err := tc.Exec(tmux.CapturePaneAllCmd(name))
+					if err == nil && full != "" {
+						totalLines = len(splitNonEmpty(full))
+					}
+				}
+
+				page := allLines
+				result, _ := json.Marshal(map[string]any{
+					"content":     strings.Join(page, "\n"),
+					"total_lines": totalLines,
+					"page_start":  totalLines - len(page) + 1,
+					"page_end":    totalLines,
+					"has_more":    hasMore,
+				})
+				return string(result), nil
+			}
+
+			// Paging backward: need full scrollback for accurate slicing.
+			all, err := tc.Exec(tmux.CapturePaneAllCmd(name))
+			if err != nil {
+				return "", fmt.Errorf("capture pane %q: %w", name, err)
+			}
 			if all == "" {
 				return emptyResult()
 			}
-
-			allLines := splitNonEmpty(all)
-			totalLines := len(allLines)
-
+			allLines = splitNonEmpty(all)
+			totalLines = len(allLines)
 			if totalLines == 0 {
 				return emptyResult()
 			}
 
-			// Calculate slice: from the end, skip offset, take lines.
 			end := totalLines - offset
 			if end < 0 {
 				end = 0
@@ -79,7 +116,7 @@ func NewReadSessionOutputTool(tc TmuxClient) Tool {
 			result, _ := json.Marshal(map[string]any{
 				"content":     strings.Join(page, "\n"),
 				"total_lines": totalLines,
-				"page_start":  start + 1, // 1-indexed for readability
+				"page_start":  start + 1,
 				"page_end":    end,
 				"has_more":    hasMore,
 			})
@@ -91,7 +128,6 @@ func NewReadSessionOutputTool(tc TmuxClient) Tool {
 // splitNonEmpty splits by newline, removing trailing empty lines.
 func splitNonEmpty(s string) []string {
 	lines := strings.Split(s, "\n")
-	// Trim trailing empty lines.
 	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
 		lines = lines[:len(lines)-1]
 	}

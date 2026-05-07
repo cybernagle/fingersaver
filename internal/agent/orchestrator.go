@@ -533,10 +533,14 @@ func isRetryableError(errMsg string) bool {
 
 func isContextOverflow(errMsg string) bool {
 	lower := strings.ToLower(errMsg)
-	for _, p := range []string{"context_length_exceeded", "context window", "too many tokens"} {
+	for _, p := range []string{"context_length_exceeded", "context window", "too many tokens", "exceeds max length"} {
 		if strings.Contains(lower, p) {
 			return true
 		}
+	}
+	// BigModel error code for prompt too long.
+	if strings.Contains(errMsg, `"1261"`) {
+		return true
 	}
 	return false
 }

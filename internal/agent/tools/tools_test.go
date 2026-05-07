@@ -154,7 +154,10 @@ func TestSendToSessionMissingArgs(t *testing.T) {
 
 func TestReadSessionOutputTool(t *testing.T) {
 	mc := newMockTmuxClient()
-	mc.results[fmt.Sprintf("capture-pane -t %s -p -S -", "reader")] = "line1\nline2\nline3"
+	allCmd := fmt.Sprintf("capture-pane -t %s -p -S -", "reader")
+	rangeCmd := fmt.Sprintf("capture-pane -t %s -p -S -%d -E -%d", "reader", 201, 0)
+	mc.results[allCmd] = "line1\nline2\nline3"
+	mc.results[rangeCmd] = "line1\nline2\nline3"
 
 	tool := NewReadSessionOutputTool(mc)
 	result, err := tool.Execute(context.Background(), map[string]any{
@@ -172,7 +175,10 @@ func TestReadSessionOutputPaging(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		lines = append(lines, fmt.Sprintf("line %d", i))
 	}
-	mc.results[fmt.Sprintf("capture-pane -t %s -p -S -", "pager")] = strings.Join(lines, "\n")
+	allOutput := strings.Join(lines, "\n")
+	mc.results[fmt.Sprintf("capture-pane -t %s -p -S -", "pager")] = allOutput
+	// Range command for page 1 (lines=3, offset=0): capture 4 lines from end.
+	mc.results[fmt.Sprintf("capture-pane -t %s -p -S -%d -E -%d", "pager", 4, 0)] = allOutput
 
 	tool := NewReadSessionOutputTool(mc)
 
