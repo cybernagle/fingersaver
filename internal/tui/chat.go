@@ -78,6 +78,8 @@ type ChatModel struct {
 	scrollOffset  int
 	ctrlCCount    int
 	lastCtrlC     time.Time
+	ctrlDCount    int
+	lastCtrlD     time.Time
 	pendingQueue  []string // queued messages to send when current work finishes
 }
 
@@ -305,7 +307,24 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return c, nil
 		case "ctrl+d":
-			return c, tea.Quit
+			if c.textInput.Value() == "" {
+				if time.Since(c.lastCtrlD) > 2*time.Second {
+					c.ctrlDCount = 0
+				}
+				c.lastCtrlD = time.Now()
+				c.ctrlDCount++
+				if c.ctrlDCount >= 2 {
+					return c, tea.Quit
+				}
+				c.appendMessage("system", "Ctrl+D again to quit")
+				return c, nil
+			}
+			// Let textinput handle forward delete natively.
+			c.scrollOffset = 0
+			c.selectedSugg = 0
+			var cmd tea.Cmd
+			c.textInput, cmd = c.textInput.Update(msg)
+			return c, cmd
 		default:
 			c.scrollOffset = 0
 			c.selectedSugg = 0
