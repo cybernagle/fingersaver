@@ -24,17 +24,18 @@ type hookPayload struct {
 // AgentNotifier tracks stop notifications from coding agents and dispatches
 // external messages (chat, session) via callbacks.
 type AgentNotifier struct {
-	mu          sync.Mutex
-	waiters     map[string]map[uint64]chan struct{} // session → waiter ID → wait channel
-	seq         map[string]uint64                   // session → latest notification sequence
-	nextID      uint64
-	sockPath    string
-	listener    net.Listener
-	done        chan struct{}
-	stopOnce    sync.Once
-	onChat      func(role, content string)
-	onSession   func(session, content string) error
-	onAgentStop func(session, status string)
+	mu           sync.Mutex
+	waiters      map[string]map[uint64]chan struct{} // session → waiter ID → wait channel
+	seq          map[string]uint64                   // session → latest notification sequence
+	nextID       uint64
+	sockPath     string
+	listener     net.Listener
+	done         chan struct{}
+	stopOnce     sync.Once
+	onChat       func(role, content string)
+	onSession    func(session, content string) error
+	onAgentStop  func(session, status string)
+	onPermission func(session string)
 }
 
 func NewAgentNotifier() *AgentNotifier {
@@ -158,6 +159,13 @@ func (n *AgentNotifier) OnAgentStop(fn func(session, status string)) {
 	n.mu.Unlock()
 }
 
+// OnPermission sets the callback for permission request notifications.
+func (n *AgentNotifier) OnPermission(fn func(session string)) {
+	n.mu.Lock()
+	n.onPermission = fn
+	n.mu.Unlock()
+}
+
 func (n *AgentNotifier) acceptLoop(ctx context.Context) {
 	backoff := 100 * time.Millisecond
 	for {
@@ -203,6 +211,7 @@ func (n *AgentNotifier) handleConn(conn net.Conn) {
 	onChat := n.onChat
 	onSession := n.onSession
 	onAgentStop := n.onAgentStop
+	onPermission := n.onPermission
 	n.mu.Unlock()
 
 	switch msg.Type {
@@ -221,6 +230,14 @@ func (n *AgentNotifier) handleConn(conn net.Conn) {
 				conn.Write([]byte("error: " + err.Error() + "\n"))
 				return
 			}
+		}
+	case "permission":
+		if msg.Session == "" {
+			return
+		}
+		n.Notify(msg.Session, "permission")
+		if onPermission != nil {
+			onPermission(msg.Session)
 		}
 	default:
 		// Backward compat: messages without type are agent_stop.

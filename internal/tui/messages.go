@@ -16,6 +16,7 @@ type OrchestratorEventMsg struct {
 	Type     string // "text", "tool_call", "tool_result", "done"
 	Content  string
 	ToolName string
+	Source   string // session name or "fingersaver"
 }
 
 // SessionListMsg carries the current session list.
@@ -32,6 +33,11 @@ type QuitRequestMsg struct{}
 
 // CancelRequestMsg is sent when the user cancels the current in-progress tool call chain.
 type CancelRequestMsg struct{}
+
+// SendKeyMsg sends a special key to the target tmux session.
+type SendKeyMsg struct {
+	Key string // "Escape", "C-c", etc.
+}
 
 // AgentStatusMsg reports agent status change.
 type AgentStatusMsg struct {

@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-const fsNotifyHookSuffix = ` notify "$(tmux display-message -p '#{session_name}')" done`
+const (
+	fsNotifyHookSuffix     = ` notify "$(tmux display-message -p '#{session_name}')" done`
+	fsPermissionHookSuffix = ` permission "$(tmux display-message -p '#{session_name}')"`
+)
 
 // claudeSettings represents the relevant parts of ~/.claude/settings.json.
 type claudeSettings struct {
@@ -86,6 +89,62 @@ func EnsureStopHook(claudeDir, executablePath string) error {
 	return os.WriteFile(settingsPath, updated, info.Mode().Perm())
 }
 
+// EnsurePermissionHook adds a fingersaver permission PermissionRequest hook to
+// Claude Code settings if one does not already exist. The function is idempotent.
+func EnsurePermissionHook(claudeDir, executablePath string) error {
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	info, err := os.Stat(settingsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat settings: %w", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return fmt.Errorf("read settings: %w", err)
+	}
+
+	var settings any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return fmt.Errorf("parse settings: %w", err)
+	}
+	root, ok := settings.(map[string]any)
+	if !ok {
+		return fmt.Errorf("parse settings: root must be an object")
+	}
+
+	hooksObj, err := ensureJSONObject(root, "hooks")
+	if err != nil {
+		return fmt.Errorf("parse settings: %w", err)
+	}
+	permHooks, err := ensureJSONArray(hooksObj, "PermissionRequest")
+	if err != nil {
+		return fmt.Errorf("parse settings: %w", err)
+	}
+
+	if permissionHookExists(permHooks) {
+		return nil
+	}
+
+	permHooks = append(permHooks, map[string]any{
+		"hooks": []any{map[string]any{
+			"type":    "command",
+			"command": buildPermissionHookCommand(executablePath),
+			"timeout": 10,
+		}},
+	})
+	hooksObj["PermissionRequest"] = permHooks
+
+	updated, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal settings: %w", err)
+	}
+	updated = append(updated, '\n')
+	return os.WriteFile(settingsPath, updated, info.Mode().Perm())
+}
+
 func ensureJSONObject(parent map[string]any, key string) (map[string]any, error) {
 	if value, ok := parent[key]; ok {
 		object, ok := value.(map[string]any)
@@ -138,12 +197,48 @@ func stopHookExists(stopGroups []any) (bool, error) {
 	return false, nil
 }
 
+func permissionHookExists(permGroups []any) bool {
+	for _, groupValue := range permGroups {
+		group, ok := groupValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		hookValues, ok := group["hooks"]
+		if !ok {
+			continue
+		}
+		hookEntries, ok := hookValues.([]any)
+		if !ok {
+			continue
+		}
+		for _, hookValue := range hookEntries {
+			hook, ok := hookValue.(map[string]any)
+			if !ok {
+				continue
+			}
+			command, _ := hook["command"].(string)
+			if isFingerSaverPermissionHook(command) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func isFingerSaverNotifyHook(command string) bool {
 	return strings.Contains(command, "fingersaver") && strings.Contains(command, fsNotifyHookSuffix)
 }
 
+func isFingerSaverPermissionHook(command string) bool {
+	return strings.Contains(command, "fingersaver") && strings.Contains(command, fsPermissionHookSuffix)
+}
+
 func buildStopHookCommand(executablePath string) string {
 	return shellQuote(executablePath) + fsNotifyHookSuffix
+}
+
+func buildPermissionHookCommand(executablePath string) string {
+	return shellQuote(executablePath) + fsPermissionHookSuffix
 }
 
 func shellQuote(value string) string {

@@ -131,3 +131,61 @@ func TestEnsureStopHookPreservesFileMode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
+
+func TestEnsurePermissionHookAddsHook(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+	execPath := filepath.Join(dir, "bin", "fingersaver")
+
+	initial := map[string]any{"env": map[string]string{}}
+	data, _ := json.MarshalIndent(initial, "", "  ")
+	require.NoError(t, os.WriteFile(settingsPath, data, 0o644))
+
+	err := EnsurePermissionHook(dir, execPath)
+	require.NoError(t, err)
+
+	result, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+
+	var settings claudeSettings
+	require.NoError(t, json.Unmarshal(result, &settings))
+
+	found := false
+	for _, group := range settings.Hooks["PermissionRequest"] {
+		for _, h := range group.Hooks {
+			if h.Command == buildPermissionHookCommand(execPath) {
+				found = true
+			}
+		}
+	}
+	assert.True(t, found, "should contain fingersaver permission hook")
+}
+
+func TestEnsurePermissionHookIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+	execPath := filepath.Join(dir, "bin", "fingersaver")
+
+	initial := map[string]any{"env": map[string]string{}}
+	data, _ := json.MarshalIndent(initial, "", "  ")
+	require.NoError(t, os.WriteFile(settingsPath, data, 0o644))
+
+	require.NoError(t, EnsurePermissionHook(dir, execPath))
+	require.NoError(t, EnsurePermissionHook(dir, execPath))
+
+	result, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+
+	var settings claudeSettings
+	require.NoError(t, json.Unmarshal(result, &settings))
+
+	count := 0
+	for _, group := range settings.Hooks["PermissionRequest"] {
+		for _, h := range group.Hooks {
+			if h.Command == buildPermissionHookCommand(execPath) {
+				count++
+			}
+		}
+	}
+	assert.Equal(t, 1, count, "should not add duplicate permission hooks")
+}

@@ -34,7 +34,7 @@ var (
 	phoneLayout = flag.Bool("phone", false, "Use phone layout (vertical split)")
 )
 
-const version = "0.4.13"
+const version = "0.4.18"
 
 func main() {
 	// Handle subcommands that communicate with a running FingerSaver instance.
@@ -48,6 +48,9 @@ func main() {
 			return
 		case "send":
 			runSocketCommand("session")
+			return
+		case "permission":
+			runSocketCommand("permission")
 			return
 		}
 	}
@@ -164,9 +167,14 @@ func main() {
 
 		// Auto-configure Claude Code stop hook.
 		if executablePath, err := os.Executable(); err != nil {
-			log.Printf("[main] warning: could not resolve executable path for Claude stop hook: %v", err)
-		} else if err := agent.EnsureStopHook(cfg.ClaudeDir, executablePath); err != nil {
-			log.Printf("[main] warning: could not configure Claude stop hook: %v", err)
+			log.Printf("[main] warning: could not resolve executable path for Claude hooks: %v", err)
+		} else {
+			if err := agent.EnsureStopHook(cfg.ClaudeDir, executablePath); err != nil {
+				log.Printf("[main] warning: could not configure Claude stop hook: %v", err)
+			}
+			if err := agent.EnsurePermissionHook(cfg.ClaudeDir, executablePath); err != nil {
+				log.Printf("[main] warning: could not configure Claude permission hook: %v", err)
+			}
 		}
 	}
 
@@ -197,6 +205,10 @@ func main() {
 				msg += "\n" + out.LastAssistantMessage
 			}
 			app.SendChatMessage("system", msg)
+		})
+
+		notifier.OnPermission(func(session string) {
+			app.SendChatMessage("system", fmt.Sprintf("Session %s waiting for permission", session))
 		})
 	}
 
@@ -469,6 +481,15 @@ func buildSocketPayload(msgType string) map[string]string {
 			"type":    "session",
 			"session": os.Args[2],
 			"content": strings.Join(os.Args[3:], " "),
+		}
+	case "permission":
+		if len(os.Args) < 3 {
+			fmt.Fprintf(os.Stderr, "Usage: fingersaver permission <session>\n")
+			return nil
+		}
+		return map[string]string{
+			"type":    "permission",
+			"session": os.Args[2],
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n", msgType)

@@ -101,13 +101,13 @@ func TestOrchestratorMention(t *testing.T) {
 	events, err := orch.ProcessInput(context.Background(), "@auth echo hello")
 	require.NoError(t, err)
 
-	var texts []string
+	var done bool
 	for e := range events {
-		if e.Type == EventText {
-			texts = append(texts, e.Content)
+		if e.Type == EventDone {
+			done = true
 		}
 	}
-	assert.Contains(t, texts[0], "Sent to")
+	assert.True(t, done, "should receive done event")
 }
 
 func TestOrchestratorMentionSessionNotFound(t *testing.T) {

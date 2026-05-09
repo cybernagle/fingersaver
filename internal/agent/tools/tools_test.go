@@ -238,8 +238,6 @@ func TestParseStructuredOutputWaitingInput(t *testing.T) {
 	raw := "⏺ Do you want to proceed with this change?\n❯ 1. Yes\n  2. No"
 	out := parseStructuredOutput(raw)
 	assert.Equal(t, "waiting_input", out.Status)
-	assert.NotNil(t, out.PendingConfirmation)
-	assert.Equal(t, "yes_no", out.PendingConfirmation.Type)
 }
 
 func TestParseStructuredOutputError(t *testing.T) {

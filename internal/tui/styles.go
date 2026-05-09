@@ -42,6 +42,13 @@ var (
 			Foreground(colorAccent).
 			Bold(true)
 
+	userBubbleStyle = lipgloss.NewStyle().
+			Foreground(colorAccent)
+
+	sourceLabelStyle = lipgloss.NewStyle().
+				Foreground(colorSecondary).
+				Bold(true)
+
 	assistantMsgStyle = lipgloss.NewStyle().
 				Foreground(colorBase)
 
@@ -64,6 +71,9 @@ var (
 	suggestionHighlightStyle = lipgloss.NewStyle().
 					Foreground(colorAccent).
 					Bold(true)
+
+	cursorHighlightStyle = lipgloss.NewStyle().
+				Reverse(true)
 )
 
 // BorderStyle returns the border style based on focus state.

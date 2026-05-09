@@ -74,7 +74,7 @@ func TestWaitUntilIdleTool(t *testing.T) {
 		notifier.Notify()
 	}()
 
-	tool := NewWaitUntilIdleTool(mc, notifier)
+	tool := NewWaitUntilIdleTool(mc, notifier, nil)
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"session_name":    sessionName,
 		"timeout_seconds": float64(10),
@@ -91,7 +91,7 @@ func TestWaitUntilIdleTimeout(t *testing.T) {
 	mc.results[fmt.Sprintf("list-panes -t %s -F #{pane_current_command}", "busy")] = "claude"
 	mc.results[fmt.Sprintf("list-panes -t %s -F #{pane_pid}", "busy")] = "12345"
 
-	tool := NewWaitUntilIdleTool(mc, nil)
+	tool := NewWaitUntilIdleTool(mc, nil, nil)
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"session_name":    "busy",
 		"timeout_seconds": float64(1),
@@ -109,7 +109,7 @@ func TestWaitUntilIdleCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	tool := NewWaitUntilIdleTool(mc, nil)
+	tool := NewWaitUntilIdleTool(mc, nil, nil)
 	result, err := tool.Execute(ctx, map[string]any{
 		"session_name":    "stuck",
 		"timeout_seconds": float64(10),
@@ -120,7 +120,7 @@ func TestWaitUntilIdleCancel(t *testing.T) {
 
 func TestWaitUntilIdleMissingSession(t *testing.T) {
 	mc := newMockTmuxClient()
-	tool := NewWaitUntilIdleTool(mc, nil)
+	tool := NewWaitUntilIdleTool(mc, nil, nil)
 	_, err := tool.Execute(context.Background(), map[string]any{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "session_name is required")
@@ -133,7 +133,7 @@ func TestWaitUntilIdleAgentDead(t *testing.T) {
 	mc.results[fmt.Sprintf("list-panes -t %s -F #{pane_current_command}", "dead")] = "zsh"
 	mc.results[fmt.Sprintf("list-panes -t %s -F #{pane_pid}", "dead")] = "99999"
 
-	tool := NewWaitUntilIdleTool(mc, nil)
+	tool := NewWaitUntilIdleTool(mc, nil, nil)
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"session_name":    "dead",
 		"timeout_seconds": float64(5),
@@ -151,7 +151,7 @@ func TestWaitUntilIdleClearsStaleNotificationBeforeWaiting(t *testing.T) {
 	notifier := newMockNotifier()
 	notifier.seq = 1
 
-	tool := NewWaitUntilIdleTool(mc, notifier)
+	tool := NewWaitUntilIdleTool(mc, notifier, nil)
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"session_name":    "busy",
 		"timeout_seconds": float64(1),
@@ -182,7 +182,7 @@ func TestWaitUntilIdleReturnsIdleOnNotification(t *testing.T) {
 		notifier.Notify()
 	}()
 
-	tool := NewWaitUntilIdleTool(mc, notifier)
+	tool := NewWaitUntilIdleTool(mc, notifier, nil)
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"session_name":    sessionName,
 		"timeout_seconds": float64(5),

@@ -31,14 +31,6 @@ func NewAssessConfirmationTool(tc TmuxClient, assessor Assessor) Tool {
 				return "", err
 			}
 
-			if out.PendingConfirmation == nil {
-				data, _ := json.Marshal(map[string]string{
-					"decision": "idle",
-					"reason":   "no pending confirmation found",
-				})
-				return string(data), nil
-			}
-
 			output := util.ReadProgressive(out.RawOutput, 2000)
 			assessment, err := assessor.Assess(ctx, sessionName, output)
 			if err != nil {
@@ -54,7 +46,7 @@ func NewAssessConfirmationTool(tc TmuxClient, assessor Assessor) Tool {
 	}
 }
 
-// NewAssessConfirmationToolWithTimeout wraps assess_confirmation with a default timeout.
+// AssessWithTimeout wraps assess_confirmation with a default timeout.
 func AssessWithTimeout(ctx context.Context, assessor Assessor, sessionName, output string, timeout time.Duration) (*Assessment, error) {
 	assessCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

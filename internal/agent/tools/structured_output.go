@@ -12,29 +12,22 @@ import (
 )
 
 type StructuredOutput struct {
-	RawOutput            string               `json:"raw_output"`
-	Status               string               `json:"status"`
-	LastUserMessage      string               `json:"last_user_message"`
-	LastAssistantMessage string               `json:"last_assistant_message"`
-	PendingConfirmation  *PendingConfirmation `json:"pending_confirmation"`
-	Errors               []string             `json:"errors"`
-	FilesModified        []string             `json:"files_modified"`
-	Timestamp            string               `json:"timestamp"`
-}
-
-type PendingConfirmation struct {
-	Type   string `json:"type"`
-	Prompt string `json:"prompt"`
+	RawOutput            string   `json:"raw_output"`
+	Status               string   `json:"status"`
+	LastUserMessage      string   `json:"last_user_message"`
+	LastAssistantMessage string   `json:"last_assistant_message"`
+	Errors               []string `json:"errors"`
+	FilesModified        []string `json:"files_modified"`
+	Timestamp            string   `json:"timestamp"`
 }
 
 var (
-	confirmationRe = regexp.MustCompile(`(?i)(do you want|would you like|allow this|proceed\?|confirm\?|should i|approve)`)
-	selectionRe    = regexp.MustCompile(`❯\s*\d+\.\s*(.+)`)
 	runningRe      = regexp.MustCompile(`(?i)(running…|running command|⏺\s*(?:executing|running)\s)`)
 	errorRe        = regexp.MustCompile(`(?i)(error[:：]|fatal[:：]|panic[:：]|FAIL!?\b)`)
 	fileOpRe       = regexp.MustCompile(`⏺\s+(?:Read|Edit|Create|Write|Delete|Modified|Created|Writing to|Reading)\s+(?:file:?\s*)?(\S+)`)
 	userMsgRe      = regexp.MustCompile(`^>\s+(.+)`)
 	assistantMsgRe = regexp.MustCompile(`⏺\s+(.+)`)
+	selectionRe    = regexp.MustCompile(`❯\s*\d+\.\s*(.+)`)
 )
 
 // ReadStructuredOutput captures and parses the full pane output from a session.
@@ -49,8 +42,6 @@ func ReadStructuredOutput(tc TmuxClient, sessionName string) (*StructuredOutput,
 
 func parseStructuredOutput(raw string) StructuredOutput {
 	lines := strings.Split(raw, "\n")
-	// For status detection and confirmation, only look at the tail to avoid
-	// stale state from earlier in the scrollback.
 	tailStart := max(0, len(lines)-80)
 	tail := lines[tailStart:]
 	return StructuredOutput{
@@ -58,7 +49,6 @@ func parseStructuredOutput(raw string) StructuredOutput {
 		Status:               detectStatus(tail),
 		LastUserMessage:      extractLastUserMessage(lines),
 		LastAssistantMessage: extractLastAssistantMessage(lines),
-		PendingConfirmation:  detectConfirmation(tail),
 		Errors:               extractErrors(lines),
 		FilesModified:        extractFiles(lines),
 		Timestamp:            time.Now().Format(time.RFC3339),
@@ -74,36 +64,40 @@ func detectStatus(lines []string) string {
 			return "waiting_input"
 		}
 	}
+	// Scan entire tail for activity indicators first — these override ❯.
+	hasRunning := false
+	hasThinking := false
 	for _, line := range recent {
-		if confirmationRe.MatchString(line) {
-			return "waiting_input"
+		if runningRe.MatchString(line) {
+			hasRunning = true
+		}
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "⏺") {
+			hasThinking = true
 		}
 	}
-	for i := len(recent) - 1; i >= 0; i-- {
-		if runningRe.MatchString(recent[i]) {
-			return "executing_command"
-		}
+	if hasRunning {
+		return "executing_command"
+	}
+	if hasThinking {
+		return "thinking"
 	}
 	for i := len(recent) - 1; i >= 0; i-- {
 		if errorRe.MatchString(recent[i]) {
 			return "error"
 		}
 	}
+	// Only fall back to ❯ if no activity markers were found in the tail.
 	for i := len(recent) - 1; i >= 0; i-- {
 		trimmed := strings.TrimSpace(recent[i])
-		// Skip Claude Code status bar lines.
 		if strings.HasPrefix(trimmed, "--") && strings.Contains(trimmed, "--") {
 			continue
 		}
 		if trimmed == "" {
 			continue
 		}
-		// A bare ❯ prompt means the agent is done (or waiting for input, handled above).
 		if strings.HasPrefix(trimmed, "❯") {
 			return "completed"
-		}
-		if strings.HasPrefix(trimmed, "⏺") {
-			return "thinking"
 		}
 		break
 	}
@@ -136,41 +130,6 @@ func extractLastAssistantMessage(lines []string) string {
 		}
 	}
 	return ""
-}
-
-func detectConfirmation(lines []string) *PendingConfirmation {
-	start := max(0, len(lines)-30)
-	recent := lines[start:]
-
-	selectionIdx := -1
-	for i := len(recent) - 1; i >= 0; i-- {
-		if selectionRe.MatchString(recent[i]) {
-			selectionIdx = i
-			break
-		}
-	}
-	if selectionIdx >= 0 {
-		var promptLines []string
-		for i := selectionIdx - 1; i >= max(0, selectionIdx-5); i-- {
-			line := strings.TrimSpace(recent[i])
-			if line == "" {
-				break
-			}
-			promptLines = append([]string{line}, promptLines...)
-		}
-		prompt := "Confirm"
-		if len(promptLines) > 0 {
-			prompt = strings.Join(promptLines, " ")
-		}
-		return &PendingConfirmation{Type: "yes_no", Prompt: prompt}
-	}
-
-	for i := len(recent) - 1; i >= 0; i-- {
-		if confirmationRe.MatchString(recent[i]) {
-			return &PendingConfirmation{Type: "yes_no", Prompt: strings.TrimSpace(recent[i])}
-		}
-	}
-	return nil
 }
 
 func extractErrors(lines []string) []string {

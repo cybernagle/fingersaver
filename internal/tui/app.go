@@ -111,9 +111,6 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+r":
 			a.recalcSizes()
 			return a, nil
-		case "ctrl+d":
-			a.cancel()
-			return a, tea.Quit
 		}
 
 	case QuitRequestMsg:
@@ -123,6 +120,14 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CancelRequestMsg:
 		if a.orchestrator != nil {
 			a.orchestrator.Cancel()
+		}
+
+	case SendKeyMsg:
+		session := a.chat.TargetSession()
+		if session != "" {
+			cmd := tmux.SendKeysCmd(session, msg.Key)
+			a.tmuxClient.Exec(cmd)
+			a.chat.AppendMessage("system", fmt.Sprintf("Sent %s to @%s", msg.Key, session))
 		}
 
 	case SubmitMsg:
@@ -346,33 +351,36 @@ func trimToLines(s string, maxLines int) string {
 
 func (a *AppModel) processOrchestratorInput(text string) {
 	log.Printf("[tui] processOrchestratorInput start textLen=%d", len(text))
+	source := "fingersaver"
+	if name, _ := agent.ExtractMention(text); name != "" {
+		source = name
+	}
 	events, err := a.orchestrator.ProcessInput(a.ctx, text)
 	if err != nil {
 		log.Printf("[tui] ProcessInput error: %v", err)
 		a.forwardEvent(agent.OrchestratorEvent{
 			Type:    agent.EventText,
 			Content: fmt.Sprintf("Error: %v", err),
-		})
-		a.forwardEvent(agent.OrchestratorEvent{Type: agent.EventDone})
+		}, source)
+		a.forwardEvent(agent.OrchestratorEvent{Type: agent.EventDone}, source)
 		return
 	}
 	count := 0
 	doneSeen := false
 	for e := range events {
-		a.forwardEvent(e)
+		a.forwardEvent(e, source)
 		count++
 		if e.Type == agent.EventDone {
 			doneSeen = true
 		}
 	}
 	log.Printf("[tui] processOrchestratorInput done events=%d", count)
-	// Ensure done event if stream closed without one.
 	if !doneSeen && a.sendFn != nil {
-		a.sendFn(OrchestratorEventMsg{Type: "done"})
+		a.sendFn(OrchestratorEventMsg{Type: "done", Source: source})
 	}
 }
 
-func (a *AppModel) forwardEvent(e agent.OrchestratorEvent) {
+func (a *AppModel) forwardEvent(e agent.OrchestratorEvent, source string) {
 	if a.sendFn == nil {
 		log.Printf("[tui] WARNING: sendFn is nil, dropping event type=%s", e.Type)
 		return
@@ -381,6 +389,7 @@ func (a *AppModel) forwardEvent(e agent.OrchestratorEvent) {
 		Type:     e.Type.String(),
 		Content:  e.Content,
 		ToolName: e.ToolName,
+		Source:   source,
 	})
 }
 
@@ -482,6 +491,21 @@ func (a *AppModel) recalcSizes() {
 		a.chat.SetSize(chatW, a.height)
 		a.viewer.SetSize(viewerW, a.height)
 		a.viewer.SetCompact(false)
+	}
+	a.resizeAllSessions()
+}
+
+// resizeAllSessions resizes all tmux sessions to match the viewer pane size.
+func (a *AppModel) resizeAllSessions() {
+	if a.tmuxClient == nil {
+		return
+	}
+	tw, th := a.viewer.Size()
+	if tw <= 0 || th <= 0 {
+		return
+	}
+	for _, s := range a.tmuxClient.State().Sessions() {
+		_, _ = a.tmuxClient.Exec(tmux.ResizeWindowCmd(s.Name, tw, th))
 	}
 }
 

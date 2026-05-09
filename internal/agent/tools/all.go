@@ -12,7 +12,7 @@ func AllTools(tc TmuxClient, assessor Assessor, cwd string, notifier Notifier) [
 		NewRelayMessageTool(tc),
 		NewSaveContextTool(tc),
 		NewRestoreContextTool(tc),
-		NewWaitUntilIdleTool(tc, notifier),
+		NewWaitUntilIdleTool(tc, notifier, assessor),
 		NewAssessConfirmationTool(tc, assessor),
 		NewRespondConfirmationTool(tc),
 		NewSetStateTool(),

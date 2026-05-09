@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/naglezhang/fingersaver/internal/tmux"
 	"github.com/naglezhang/fingersaver/internal/util"
 )
 
@@ -33,15 +31,6 @@ func NewRelayMessageTool(tc TmuxClient) Tool {
 			srcOutput, err := ReadStructuredOutput(tc, fromSession)
 			if err != nil {
 				return "", err
-			}
-
-			targetRaw, _ := tc.Exec(tmux.CapturePaneCmd(toSession))
-			if targetRaw != "" {
-				targetOutput := parseStructuredOutput(targetRaw)
-				if targetOutput.PendingConfirmation != nil {
-					tc.Exec(tmux.SendEscapeCmd(toSession))
-					time.Sleep(200 * time.Millisecond)
-				}
 			}
 
 			msg := formatRelayMessage(fromSession, messageType, content, srcOutput)

@@ -10,6 +10,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
+	lipgloss "charm.land/lipgloss/v2"
 	"github.com/naglezhang/fingersaver/internal/agent"
 	"github.com/naglezhang/fingersaver/internal/util"
 )
@@ -18,6 +19,7 @@ type ChatMessage struct {
 	Role      string
 	Content   string
 	Streaming bool
+	Source    string
 	rendered  string
 }
 
@@ -81,6 +83,7 @@ type ChatModel struct {
 	ctrlDCount    int
 	lastCtrlD     time.Time
 	pendingQueue  []string // queued messages to send when current work finishes
+	activeRuns    int      // number of concurrent orchestrator goroutines
 }
 
 func NewChatModel() ChatModel {
@@ -124,13 +127,33 @@ func filterCommandSuggestions(commands []CommandSuggestion, prefix string) []Sug
 	return result
 }
 
+// sessionKeySuggestions are only available when a session is targeted.
+var sessionKeySuggestions = []Suggestion{
+	{Text: "/enter ", Description: "Send Enter to target session"},
+	{Text: "/esc ", Description: "Send Escape to target session"},
+	{Text: "/ctrlc ", Description: "Send Ctrl+C to target session"},
+}
+
+func appendSessionKeySuggestions(suggs []Suggestion, prefix string) []Suggestion {
+	for _, s := range sessionKeySuggestions {
+		cmd := strings.TrimPrefix(s.Text, "/")
+		cmd = strings.TrimRight(cmd, " ")
+		if strings.HasPrefix(cmd, prefix) {
+			suggs = append(suggs, s)
+		}
+	}
+	return suggs
+}
+
 // currentSuggestions returns filtered suggestions based on the current input.
 // Returns nil when no suggestions should be shown.
 func (c ChatModel) currentSuggestions() []Suggestion {
 	input := c.textInput.Value()
 
 	if c.targetSession != "" && strings.HasPrefix(input, "/") {
-		return filterCommandSuggestions(c.commands, input[1:])
+		result := filterCommandSuggestions(c.commands, input[1:])
+		result = appendSessionKeySuggestions(result, input[1:])
+		return result
 	}
 
 	if strings.HasPrefix(input, "/") {
@@ -205,6 +228,7 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				c.textInput.SetValue(s.Text)
+				c.textInput.CursorEnd()
 				c.selectedSugg = 0
 				return c, nil
 			case "esc":
@@ -227,6 +251,21 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				c.textInput.Reset()
 				c.trimHistory()
 				return c, func() tea.Msg { return SubmitMsg{Text: trimmed} }
+			}
+			// Send key commands: /enter, /esc, /ctrlc send to target session.
+			if (trimmed == "/enter" || trimmed == "/esc" || trimmed == "/ctrlc") && c.targetSession != "" {
+				c.inputHistory = append(c.inputHistory, input)
+				c.historyIdx = len(c.inputHistory)
+				c.textInput.Reset()
+				c.trimHistory()
+				key := "Escape"
+				switch trimmed {
+				case "/enter":
+					key = "Enter"
+				case "/ctrlc":
+					key = "C-c"
+				}
+				return c, func() tea.Msg { return SendKeyMsg{Key: key} }
 			}
 			text := input
 			// Prepend sticky session target unless input already starts with @.
@@ -252,6 +291,7 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Agent is busy — @session sends go through immediately,
 				// other messages are queued for when work finishes.
 				if strings.HasPrefix(strings.TrimSpace(text), "@") {
+					c.activeRuns++
 					return c, func() tea.Msg { return SubmitMsg{Text: text} }
 				}
 				if len(c.pendingQueue) >= 50 {
@@ -263,6 +303,7 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return c, nil
 			}
 
+			c.activeRuns = 1
 			c.working = true
 			c.workingMsg = ""
 			c.workStart = time.Now()
@@ -339,7 +380,7 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if n := len(c.messages); n > 0 && c.messages[n-1].Role == "assistant" && c.messages[n-1].Streaming {
 				c.messages[n-1].Content += msg.Content
 			} else {
-				c.appendStreamingMessage("assistant", msg.Content)
+				c.appendStreamingMessage("assistant", msg.Content, msg.Source)
 			}
 		case "tool_call":
 			c.flushStreamingToHistory()
@@ -347,24 +388,29 @@ func (c ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			c.workingMsg = fmt.Sprintf("Calling %s", msg.ToolName)
 		case "tool_result":
 			c.flushStreamingToHistory()
-			c.appendMessage("system", fmt.Sprintf("[%s] %s", msg.ToolName, util.Truncate(msg.Content, 200)))
+			c.appendMessageWithSource("system", fmt.Sprintf("[%s] %s", msg.ToolName, util.Truncate(msg.Content, 200)), msg.Source)
 			c.working = true
 			c.workingMsg = ""
 		case "done":
 			c.flushStreamingToHistory()
-			c.working = false
-			c.workingMsg = ""
-			// Send next queued message if any.
-			if len(c.pendingQueue) > 0 {
-				text := c.pendingQueue[0]
-				c.pendingQueue = c.pendingQueue[1:]
-				c.working = true
-				c.workStart = time.Now()
-				c.spinnerFrame = 0
-				return c, tea.Batch(
-					func() tea.Msg { return SubmitMsg{Text: text} },
-					tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return spinnerTickMsg(t) }),
-				)
+			c.activeRuns--
+			if c.activeRuns <= 0 {
+				c.activeRuns = 0
+				c.working = false
+				c.workingMsg = ""
+				// Send next queued message if any.
+				if len(c.pendingQueue) > 0 {
+					text := c.pendingQueue[0]
+					c.pendingQueue = c.pendingQueue[1:]
+					c.activeRuns = 1
+					c.working = true
+					c.workStart = time.Now()
+					c.spinnerFrame = 0
+					return c, tea.Batch(
+						func() tea.Msg { return SubmitMsg{Text: text} },
+						tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return spinnerTickMsg(t) }),
+					)
+				}
 			}
 		}
 
@@ -395,40 +441,75 @@ func (c ChatModel) View() tea.View {
 	// Render all content into lines, then trim from top to fit.
 	var contentLines []string
 
+	contentW := c.width - 2
+	if contentW < 10 {
+		contentW = 10
+	}
+
 	for i := range c.messages {
 		m := &c.messages[i]
-		var rendered string
 		switch m.Role {
 		case "user":
 			if m.rendered == "" {
-				m.rendered = userMsgStyle.Render("> " + m.Content)
+				plain := m.Content
+				plainW := len(plain)
+				plainPad := contentW - plainW
+				if plainPad > 0 {
+					m.rendered = strings.Repeat(" ", plainPad) + plain
+				} else {
+					m.rendered = plain
+				}
+				log.Printf("[chat] user align: c.width=%d contentW=%d plainLen=%d plainPad=%d", c.width, contentW, plainW, plainPad)
 			}
-			rendered = m.rendered
+			for _, line := range splitLines(m.rendered) {
+				contentLines = append(contentLines, line)
+			}
 		case "assistant":
+			source := m.Source
+			if source == "" {
+				source = "fingersaver"
+			}
 			if m.Streaming {
-				rendered = assistantMsgStyle.Render(m.Content)
+				contentLines = append(contentLines, sourceLabelStyle.Render(source))
+				for _, line := range splitLines(assistantMsgStyle.Render(m.Content)) {
+					contentLines = append(contentLines, line)
+				}
 			} else {
 				if m.rendered == "" {
-					m.rendered = assistantMsgStyle.Render(renderMarkdown(m.Content))
+					label := sourceLabelStyle.Render(source)
+					body := assistantMsgStyle.Render(renderMarkdown(m.Content))
+					m.rendered = label + "\n" + body
 				}
-				rendered = m.rendered
+				for _, line := range splitLines(m.rendered) {
+					contentLines = append(contentLines, line)
+				}
 			}
 		case "system":
-			if m.rendered == "" {
-				m.rendered = systemMsgStyle.Render(m.Content)
+			if m.Source != "" {
+				if m.rendered == "" {
+					label := sourceLabelStyle.Render(m.Source)
+					body := systemMsgStyle.Render(m.Content)
+					m.rendered = label + "\n" + body
+				}
+				for _, line := range splitLines(m.rendered) {
+					contentLines = append(contentLines, line)
+				}
+			} else {
+				if m.rendered == "" {
+					m.rendered = systemMsgStyle.Render(m.Content)
+				}
+				for _, line := range splitLines(m.rendered) {
+					contentLines = append(contentLines, line)
+				}
 			}
-			rendered = m.rendered
 		case "guardian":
 			if m.rendered == "" {
 				m.rendered = guardianMsgStyle.Render(m.Content)
 			}
-			rendered = m.rendered
+			for _, line := range splitLines(m.rendered) {
+				contentLines = append(contentLines, line)
+			}
 		}
-		lines := strings.Split(rendered, "\n")
-		if len(lines) > 0 && lines[len(lines)-1] == "" {
-			lines = lines[:len(lines)-1]
-		}
-		contentLines = append(contentLines, lines...)
 		contentLines = append(contentLines, "")
 	}
 
@@ -532,7 +613,17 @@ func (c ChatModel) View() tea.View {
 		contentLines = append(contentLines, chatInputStyle.Render(prefix+cursorCh+hint))
 	} else {
 		pos := runeIdxToByte(input, cursor)
-		cursorLine := prefix + input[:pos] + cursorCh + input[pos:]
+		// Use reverse-video on the character under cursor to avoid
+		// shifting text by inserting an extra character.
+		var cursorLine string
+		runes := []rune(input)
+		if c.focused && cursor < len(runes) {
+			ch := string(runes[cursor])
+			after := input[runeIdxToByte(input, cursor+1):]
+			cursorLine = prefix + input[:pos] + cursorHighlightStyle.Render(ch) + after
+		} else {
+			cursorLine = prefix + input[:pos] + cursorCh + input[pos:]
+		}
 		contentLines = append(contentLines, chatInputStyle.Render(cursorLine))
 	}
 
@@ -580,14 +671,21 @@ func (c *ChatModel) AppendMessage(role, content string) {
 }
 
 func (c *ChatModel) appendMessage(role, content string) {
-	c.messages = append(c.messages, ChatMessage{Role: role, Content: content})
+	c.messages = append(c.messages, ChatMessage{Role: role, Content: content, Source: "fingersaver"})
 	if c.history != nil {
 		c.history.Append(role, content)
 	}
 }
 
-func (c *ChatModel) appendStreamingMessage(role, content string) {
-	c.messages = append(c.messages, ChatMessage{Role: role, Content: content, Streaming: true})
+func (c *ChatModel) appendMessageWithSource(role, content, source string) {
+	c.messages = append(c.messages, ChatMessage{Role: role, Content: content, Source: source})
+	if c.history != nil {
+		c.history.Append(role, content)
+	}
+}
+
+func (c *ChatModel) appendStreamingMessage(role, content, source string) {
+	c.messages = append(c.messages, ChatMessage{Role: role, Content: content, Streaming: true, Source: source})
 }
 
 func (c *ChatModel) flushStreamingToHistory() {
@@ -597,6 +695,35 @@ func (c *ChatModel) flushStreamingToHistory() {
 			c.history.Append(c.messages[n-1].Role, c.messages[n-1].Content)
 		}
 	}
+}
+
+// rightAlign pads each line of text on the left so it is right-aligned within width.
+func rightAlign(text string, width int) string {
+	lines := strings.Split(text, "\n")
+	maxW := 0
+	for _, l := range lines {
+		if w := lipgloss.Width(l); w > maxW {
+			maxW = w
+		}
+	}
+	if maxW >= width {
+		return text
+	}
+	pad := width - maxW
+	padding := strings.Repeat(" ", pad)
+	for i, l := range lines {
+		lines[i] = padding + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+// splitLines splits text into lines, trimming the trailing empty line.
+func splitLines(text string) []string {
+	lines := strings.Split(text, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
 }
 
 func (c *ChatModel) SetSize(w, h int) {

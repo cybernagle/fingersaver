@@ -324,9 +324,8 @@ func (o *Orchestrator) handleMention(ctx context.Context, ch chan<- Orchestrator
 	if err := tools.DirectSend(o.tc, sessionName, text); err != nil {
 		ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("Error sending to @%s: %v", sessionName, err)}
 	} else {
-		ch <- OrchestratorEvent{Type: EventText, Content: fmt.Sprintf("Sent to @%s: %s", sessionName, util.Truncate(text, 80))}
+		ch <- OrchestratorEvent{Type: EventDone}
 	}
-	ch <- OrchestratorEvent{Type: EventDone}
 }
 
 func (o *Orchestrator) handleLLM(ctx context.Context, ch chan<- OrchestratorEvent, input string) {

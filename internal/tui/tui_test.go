@@ -445,10 +445,10 @@ func TestChatModelSlashSuggestionsInStickySession(t *testing.T) {
 	})
 	c.targetSession = "auth"
 
-	// / commands should still suggest in sticky session mode.
+	// / commands should still suggest in sticky session mode, plus session key commands.
 	c.textInput.SetValue("/")
 	suggs := c.currentSuggestions()
-	require.Len(t, suggs, 1)
+	require.Len(t, suggs, 4)
 	assert.Equal(t, "/create ", suggs[0].Text)
 
 	// @ suggestions should NOT appear in sticky session mode.
