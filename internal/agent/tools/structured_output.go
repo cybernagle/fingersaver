@@ -59,12 +59,32 @@ func detectStatus(lines []string) string {
 	start := max(0, len(lines)-30)
 	recent := lines[start:]
 
+	// Check for selection prompt first — highest priority.
 	for _, line := range recent {
 		if selectionRe.MatchString(line) {
 			return "waiting_input"
 		}
 	}
-	// Scan entire tail for activity indicators first — these override ❯.
+
+	// Check if the last non-empty line is a shell prompt (❯).
+	// This is the strongest idle signal — overrides all ⏺ markers above it.
+	lastNonEmpty := ""
+	for i := len(recent) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(recent[i])
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "--") && strings.Contains(trimmed, "--") {
+			continue
+		}
+		lastNonEmpty = trimmed
+		break
+	}
+	if strings.HasPrefix(lastNonEmpty, "❯") {
+		return "completed"
+	}
+
+	// No shell prompt — check for activity indicators.
 	hasRunning := false
 	hasThinking := false
 	for _, line := range recent {
@@ -86,20 +106,6 @@ func detectStatus(lines []string) string {
 		if errorRe.MatchString(recent[i]) {
 			return "error"
 		}
-	}
-	// Only fall back to ❯ if no activity markers were found in the tail.
-	for i := len(recent) - 1; i >= 0; i-- {
-		trimmed := strings.TrimSpace(recent[i])
-		if strings.HasPrefix(trimmed, "--") && strings.Contains(trimmed, "--") {
-			continue
-		}
-		if trimmed == "" {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "❯") {
-			return "completed"
-		}
-		break
 	}
 	return "completed"
 }

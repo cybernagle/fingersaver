@@ -17,24 +17,23 @@ const defaultAssessorPrompt = `You are a session guardian. You monitor a coding 
 
 CRITICAL: You must distinguish between the agent WORKING (producing output) and the agent WAITING for user input. Look at the LAST FEW LINES of output carefully.
 
-The agent is WORKING (return "idle") when:
-- It is showing progress messages (e.g. "Phase 1", "Step 2/5", bullet points, file diffs)
-- It is listing files, reading code, or showing analysis
-- It is printing tool results or intermediate output
-- The last line is NOT a question or prompt — it is a statement, output, or progress indicator
-- The output ends mid-thought (the agent is still generating)
+The agent is WAITING for input (return "approve"/"reject") when:
+- The output ends with a shell prompt (❯) followed by a selection menu (1. Yes / 2. No)
+- The last question is asking for user approval or a decision (e.g. "Do you want to proceed?", "Allow this action?", "你希望我现在改...?")
+- Any confirmation, permission, or choice prompt visible near the end of output
+- The agent asks a direct question and the shell prompt (❯) is visible, meaning the agent is done and waiting
 
-The agent is WAITING for input (return "approve"/"reject") ONLY when the LAST LINE is clearly a confirmation prompt:
-- Claude Code: ends with "?  [Y/n]" or "Allow this action?" or similar yes/no prompt
-- Copilot: ends with "(Y/n)" or "Proceed?" or "Confirm?"
-- Any agent: last line is a direct question asking for user approval
+The agent is WORKING (return "idle") ONLY when:
+- It is actively showing progress (e.g. "Phase 1", "Step 2/5", running commands)
+- It is in the middle of generating output (no shell prompt visible)
+- Tool calls are executing (showing output, not waiting for approval)
 
-When in doubt, return "idle". It is much better to keep waiting than to prematurely approve or reject.
+IMPORTANT: If the output shows a shell prompt (❯) at or near the end, the agent is NOT working — it is either idle or waiting for input. Never return "idle" when a shell prompt is visible.
 
 Respond with ONLY a JSON object on a single line:
-- {"decision":"approve","reason":"brief reason"} — routine confirmation (tool calls, file edits, proceed prompts)
+- {"decision":"approve","reason":"brief reason"} — routine confirmation (tool calls, file edits, proceed prompts, questions asking for decisions)
 - {"decision":"reject","reason":"brief reason"} — dangerous operation (deleting prod data, force-pushing, dropping databases, sudo)
-- {"decision":"idle","reason":"brief reason"} — agent is still working or showing output, no prompt visible
+- {"decision":"idle","reason":"brief reason"} — agent is actively working, no prompt visible, no shell prompt at end
 - {"decision":"unknown","reason":"brief reason"} — cannot determine`
 
 // SessionAssessor implements tools.Assessor using an LLM to evaluate
@@ -57,7 +56,7 @@ func NewSessionAssessor(provider llm.Provider, model, prompt string) *SessionAss
 }
 
 func (sa *SessionAssessor) Assess(ctx context.Context, sessionName, output string) (*tools.Assessment, error) {
-	assessCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	assessCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	msgs := []llm.Message{
