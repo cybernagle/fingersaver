@@ -184,7 +184,7 @@ func main() {
 	}
 
 	// Create and run TUI.
-	app := tui.NewAppModel(orch, tc)
+	app := tui.NewAppModel(orch, tc, notifier, assessor)
 	if *phoneLayout {
 		app.SetLayout(tui.LayoutPhone)
 	}

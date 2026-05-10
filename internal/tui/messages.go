@@ -57,6 +57,11 @@ type ExternalChatMsg struct {
 	Content string
 }
 
+// monitorDoneMsg is sent when a background monitor finishes to clean up state.
+type monitorDoneMsg struct {
+	session string
+}
+
 // tickMsg is used for periodic tmux polling.
 type tickMsg struct{}
 

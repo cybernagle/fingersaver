@@ -46,6 +46,10 @@ type AppModel struct {
 	sendFn       func(tea.Msg)
 	lastOutput   map[string]string
 	lastSessions []string
+
+	notifier tools.Notifier
+	assessor tools.Assessor
+	monitors map[string]context.CancelFunc // active monitors: session → cancel
 }
 
 type tmuxClient interface {
@@ -53,7 +57,7 @@ type tmuxClient interface {
 	State() *tmux.StateMirror
 }
 
-func NewAppModel(orch *agent.Orchestrator, tc tmuxClient) AppModel {
+func NewAppModel(orch *agent.Orchestrator, tc tmuxClient, notifier tools.Notifier, assessor tools.Assessor) AppModel {
 	ctx, cancel := context.WithCancel(context.Background())
 	chat := NewChatModel()
 	if orch != nil {
@@ -73,6 +77,9 @@ func NewAppModel(orch *agent.Orchestrator, tc tmuxClient) AppModel {
 		ctx:          ctx,
 		cancel:       cancel,
 		lastOutput:   make(map[string]string),
+		notifier:     notifier,
+		assessor:     assessor,
+		monitors:     make(map[string]context.CancelFunc),
 	}
 }
 
@@ -158,11 +165,13 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				delete(a.lastOutput, fields[0])
 			}
 		}
-		// &session: background monitor until idle.
+		// &session: background monitor until idle. & alone lists active monitors.
 		if strings.HasPrefix(text, "&") {
 			sessionName := agent.ExtractMonitor(text)
 			if sessionName != "" {
 				a.startMonitor(sessionName)
+			} else {
+				a.listMonitors()
 			}
 			return a, nil
 		}
@@ -226,6 +235,9 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.chat = m.(ChatModel)
 		cmds = append(cmds, cmd)
 		return a, tea.Batch(cmds...)
+
+	case monitorDoneMsg:
+		delete(a.monitors, msg.session)
 
 	}
 
@@ -525,10 +537,26 @@ func (a *AppModel) SetChatHistory(h *ChatHistory) {
 
 // startMonitor launches a background goroutine that polls a session until idle.
 func (a *AppModel) startMonitor(sessionName string) {
+	// Cancel existing monitor for this session if any.
+	if cancel, ok := a.monitors[sessionName]; ok {
+		cancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.monitors[sessionName] = cancel
 	a.chat.AppendMessage("system", fmt.Sprintf("Monitoring @%s until idle...", sessionName))
+
 	go func() {
-		tool := tools.NewWaitUntilIdleTool(a.tmuxClient, nil, nil)
-		result, err := tool.Execute(a.ctx, map[string]any{
+		defer func() {
+			if a.sendFn != nil {
+				a.sendFn(ExternalChatMsg{Role: "system", Content: fmt.Sprintf("Monitor @%s stopped", sessionName)})
+			}
+			// Clean up from monitors map via sendFn to avoid data race.
+			if a.sendFn != nil {
+				a.sendFn(monitorDoneMsg{session: sessionName})
+			}
+		}()
+		tool := tools.NewWaitUntilIdleTool(a.tmuxClient, a.notifier, a.assessor)
+		result, err := tool.Execute(ctx, map[string]any{
 			"session_name":    sessionName,
 			"timeout_seconds": float64(300),
 		})
@@ -540,4 +568,18 @@ func (a *AppModel) startMonitor(sessionName string) {
 			}
 		}
 	}()
+}
+
+// listMonitors shows all active background monitors.
+func (a *AppModel) listMonitors() {
+	if len(a.monitors) == 0 {
+		a.chat.AppendMessage("system", "No active monitors.")
+		return
+	}
+	var names []string
+	for name := range a.monitors {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	a.chat.AppendMessage("system", fmt.Sprintf("Active monitors: %s", strings.Join(names, ", ")))
 }
